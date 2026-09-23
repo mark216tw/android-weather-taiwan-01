@@ -1,0 +1,537 @@
+package tw.app.taiwanweather.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AddLocationAlt
+import androidx.compose.material.icons.filled.Air
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Umbrella
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Cancel
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ArrowDropUp
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.activity.compose.BackHandler
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import tw.app.taiwanweather.AppUiState
+import tw.app.taiwanweather.AppViewModel
+import tw.app.taiwanweather.ApiTestState
+import tw.app.taiwanweather.data.DailyForecast
+import tw.app.taiwanweather.data.DisplayMode
+import tw.app.taiwanweather.data.LoadState
+import tw.app.taiwanweather.data.Place
+import tw.app.taiwanweather.data.TaiwanCounties
+import tw.app.taiwanweather.data.WeatherReport
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.ui.platform.LocalContext
+
+@Composable
+fun TaiwanWeatherApp(viewModel: AppViewModel, requestLocation: () -> Unit) {
+    val state by viewModel.ui.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    var screen by remember { mutableStateOf(AppScreen.Home) }
+    var draftCounty by remember { mutableStateOf(state.selected.county) }
+    var draftTownship by remember { mutableStateOf(state.selected.township) }
+    LaunchedEffect(state.message) {
+        state.message?.let { snackbar.showSnackbar(it); viewModel.clearMessage() }
+    }
+    BackHandler(enabled = screen != AppScreen.Home) {
+        screen = when (screen) {
+            AppScreen.CountyPicker, AppScreen.TownshipPicker -> AppScreen.Locations
+            AppScreen.Locations, AppScreen.Settings -> AppScreen.Home
+            AppScreen.Home -> AppScreen.Home
+        }
+    }
+
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) }
+    ) { padding ->
+        Box(
+            Modifier.fillMaxSize().padding(padding).background(
+                Brush.verticalGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.background,
+                        MaterialTheme.colorScheme.secondaryContainer.copy(alpha = .34f),
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = .24f)
+                    )
+                )
+            )
+        ) {
+            when (screen) {
+                AppScreen.Home -> HomeScreen(
+                    state = state,
+                    refresh = viewModel::refresh,
+                    locate = requestLocation,
+                    chooseLocation = { draftCounty = state.selected.county; draftTownship = state.selected.township; screen = AppScreen.Locations },
+                    openSettings = { screen = AppScreen.Settings }
+                )
+                AppScreen.Locations -> LocationAndFavoritesScreen(
+                    state,
+                    onBack = { screen = AppScreen.Home },
+                    county = draftCounty,
+                    township = draftTownship,
+                    onCountyClick = { screen = AppScreen.CountyPicker },
+                    onTownshipClick = { viewModel.loadTownships(draftCounty); screen = AppScreen.TownshipPicker },
+                    onSelectCounty = { draftCounty = it; draftTownship = TaiwanCounties.first { county -> county.name == it }.defaultTownship; viewModel.loadTownships(it); screen = AppScreen.Locations },
+                    onSelectTownship = { draftTownship = it; screen = AppScreen.Locations },
+                    onSelect = { viewModel.select(it); screen = AppScreen.Home },
+                    onToggleFavorite = viewModel::toggleFavorite,
+                    onRemove = viewModel::removeFavorite,
+                    onMove = viewModel::moveFavorite
+                )
+                AppScreen.Settings -> SettingsScreen(
+                    state,
+                    { screen = AppScreen.Home },
+                    viewModel::saveKeys,
+                    viewModel::testCwa,
+                    viewModel::testMoenv,
+                    viewModel::resetCwaTest,
+                    viewModel::resetMoenvTest,
+                    viewModel::setDisplayMode
+                )
+                AppScreen.CountyPicker -> LocationPickerScreen("選擇縣市", TaiwanCounties.map { it.name }, draftCounty, { draftCounty = it; draftTownship = TaiwanCounties.first { c -> c.name == it }.defaultTownship; viewModel.loadTownships(it); screen = AppScreen.Locations }, { screen = AppScreen.Locations })
+                AppScreen.TownshipPicker -> LocationPickerScreen("選擇鄉鎮市區", state.townships, draftTownship, { draftTownship = it; screen = AppScreen.Locations }, { screen = AppScreen.Locations })
+            }
+        }
+    }
+}
+
+private enum class AppScreen { Home, Locations, Settings, CountyPicker, TownshipPicker }
+
+@Composable
+private fun HomeScreen(
+    state: AppUiState,
+    refresh: () -> Unit,
+    locate: () -> Unit,
+    chooseLocation: () -> Unit,
+    openSettings: () -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("台灣天氣", fontSize = 28.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+                    Text("今天也要帶著好心情出門 ♡", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(refresh) { Icon(Icons.Default.Refresh, "重新整理") }
+                IconButton(openSettings) { Icon(Icons.Default.Settings, "設定") }
+            }
+        }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                FilledTonalButton(onClick = chooseLocation, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.AddLocationAlt, null)
+                    Text(" ${state.selected.title}")
+                }
+                IconButton(locate) { Icon(Icons.Default.LocationOn, "使用目前位置", tint = MaterialTheme.colorScheme.secondary) }
+            }
+        }
+        when (val load = state.loadState) {
+            LoadState.Idle -> item { EmptyCard("請先到設定輸入 API 授權碼，再開始查看天氣。") }
+            LoadState.Loading -> item { Box(Modifier.fillMaxWidth().height(240.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
+            is LoadState.Error -> item {
+                EmptyCard(load.message)
+                Spacer(Modifier.height(8.dp))
+                Button(onClick = refresh, modifier = Modifier.fillMaxWidth()) { Text("再試一次") }
+            }
+            is LoadState.Success -> reportItems(load.report)
+        }
+    }
+}
+
+private fun androidx.compose.foundation.lazy.LazyListScope.reportItems(report: WeatherReport) {
+    item { CurrentWeatherCard(report) }
+    report.airQuality?.let { air ->
+        item {
+            CuteCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(54.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.Air, null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                    }
+                    Column(Modifier.padding(start = 14.dp).weight(1f)) {
+                        Text("空氣品質 ${air.status}", fontWeight = FontWeight.Bold)
+                        Text("AQI ${air.aqi}　PM2.5 ${air.pm25}")
+                        Text("${air.siteName}測站 · ${air.publishTime}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+    }
+    item { Text("未來幾天", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp)) }
+    item {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(report.forecast) { ForecastCard(it) }
+        }
+    }
+    item {
+        Column {
+            Text("更新於 ${report.updatedAt}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("資料來源：中央氣象署、環境部", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun CurrentWeatherCard(report: WeatherReport) {
+    Card(
+        shape = RoundedCornerShape(32.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        elevation = CardDefaults.cardElevation(5.dp)
+    ) {
+        Column(Modifier.padding(24.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                Text(weatherSymbol(report.current.description), fontSize = 66.sp, modifier = Modifier.padding(end = 24.dp))
+                Column(horizontalAlignment = Alignment.Start) {
+                    Text("${report.current.temperature}°", fontSize = 58.sp, fontWeight = FontWeight.Black)
+                    Text(report.current.description, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text("體感 ${report.current.apparentTemperature}°", color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .75f))
+                }
+            }
+            HorizontalDivider(Modifier.padding(vertical = 16.dp), color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .14f))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Metric("濕度", "${report.current.humidity}%")
+                Metric("降雨", "${report.current.rainProbability}%")
+                Metric("風", report.current.wind)
+            }
+        }
+    }
+}
+
+@Composable private fun Metric(label: String, value: String) = Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(value, fontWeight = FontWeight.Bold)
+}
+
+@Composable
+private fun ForecastCard(day: DailyForecast) {
+    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .92f))) {
+        Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(day.date.drop(5).replace('-', '/'), fontWeight = FontWeight.Bold)
+            Text(weatherSymbol(day.description), fontSize = 34.sp)
+            Text(day.description, maxLines = 1, fontSize = 13.sp)
+            Text("${day.minTemperature}° / ${day.maxTemperature}°", fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Umbrella, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.secondary); Text(" ${day.rainProbability}%", fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun LocationAndFavoritesScreen(
+    state: AppUiState,
+    onBack: () -> Unit,
+    county: String,
+    township: String,
+    onCountyClick: () -> Unit,
+    onTownshipClick: () -> Unit,
+    onSelectCounty: (String) -> Unit,
+    onSelectTownship: (String) -> Unit,
+    onSelect: (Place) -> Unit,
+    onToggleFavorite: (Place) -> Unit,
+    onRemove: (Place) -> Unit,
+    onMove: (Int, Int) -> Unit
+) {
+    val draftPlace = Place(county, township)
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "回到主畫面") }
+                Column {
+                    Text("地點與收藏", fontSize = 28.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+                    Text("選擇台灣縣市與鄉鎮市區", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        item {
+            CuteCard {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    OutlinedButton(onCountyClick, Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+                            Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
+                                Text("縣市", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(county, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Icon(Icons.Default.ArrowDropDown, "選擇縣市")
+                        }
+                    OutlinedButton(
+                            onClick = onTownshipClick,
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !state.loadingTownships,
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
+                                Text("鄉鎮市區", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(if (state.loadingTownships) "載入中…" else township, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                            }
+                            if (state.loadingTownships) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            else Icon(Icons.Default.ArrowDropDown, "選擇鄉鎮市區")
+                        }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button({ onSelect(draftPlace) }, enabled = !state.loadingTownships, modifier = Modifier.weight(1f)) {
+                            Text("查看天氣")
+                        }
+                        OutlinedButton({ onToggleFavorite(draftPlace) }, modifier = Modifier.weight(1f)) {
+                            Icon(if (draftPlace in state.favorites) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null)
+                            Text(if (draftPlace in state.favorites) " 移除收藏" else " 加入收藏")
+                        }
+                    }
+                }
+            }
+        }
+        item { Text("我的收藏", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp)) }
+        if (state.favorites.isEmpty()) item { EmptyCard("還沒有收藏地點，將喜歡的地方放進口袋吧！") }
+        items(state.favorites, key = { it.title }) { place ->
+            val index = state.favorites.indexOf(place)
+            CuteCard(onClick = { onSelect(place) }) {
+                Icon(Icons.Default.LocationOn, null, tint = MaterialTheme.colorScheme.primary)
+                Text(place.title, Modifier.padding(start = 12.dp).weight(1f), fontWeight = FontWeight.Bold)
+                Column {
+                    Row {
+                        IconButton({ onMove(index, index - 1) }, enabled = index > 0) { Icon(Icons.Default.ArrowUpward, "上移 ${place.title}") }
+                        IconButton({ onMove(index, index + 1) }, enabled = index < state.favorites.lastIndex) { Icon(Icons.Default.ArrowDownward, "下移 ${place.title}") }
+                    }
+                }
+                IconButton({ onRemove(place) }) { Icon(Icons.Default.DeleteOutline, "刪除") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsScreen(
+    state: AppUiState,
+    onBack: () -> Unit,
+    save: (String, String) -> Unit,
+    testCwa: (String) -> Unit,
+    testMoenv: (String) -> Unit,
+    resetCwaTest: () -> Unit,
+    resetMoenvTest: () -> Unit,
+    setDisplayMode: (DisplayMode) -> Unit
+) {
+    var cwa by remember(state.cwaKey) { mutableStateOf(state.cwaKey) }
+    var moenv by remember(state.moenvKey) { mutableStateOf(state.moenvKey) }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "回到主畫面") }
+                Text("設定", fontSize = 28.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+            }
+        }
+        item { Text("授權碼只會加密儲存在這台裝置，不會傳送到其他伺服器。") }
+        item {
+            CuteCard {
+                Column(Modifier.fillMaxWidth()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Palette, null, tint = MaterialTheme.colorScheme.primary)
+                        Text("顯示模式", Modifier.padding(start = 10.dp), fontWeight = FontWeight.Bold)
+                    }
+                    Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(
+                            DisplayMode.SYSTEM to "系統",
+                            DisplayMode.LIGHT to "淺色",
+                            DisplayMode.DARK to "深色"
+                        ).forEach { (mode, label) ->
+                            FilterChip(
+                                selected = state.displayMode == mode,
+                                onClick = { setDisplayMode(mode) },
+                                label = { Text(label) },
+                                leadingIcon = if (state.displayMode == mode) {{ Icon(Icons.Default.Check, null, Modifier.size(16.dp)) }} else null,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                    Text("選擇後立即生效", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        item {
+            ApiKeyCard("中央氣象署 CWA", "申請中央氣象署授權碼", "https://opendata.cwa.gov.tw/index", cwa, {
+                cwa = it
+                resetCwaTest()
+            }, state.cwaTestState, { testCwa(cwa) })
+        }
+        item {
+            ApiKeyCard("環境部 MOENV", "申請環境部 API Key", "https://data.moenv.gov.tw/api-term", moenv, {
+                moenv = it
+                resetMoenvTest()
+            }, state.moenvTestState, { testMoenv(moenv) })
+        }
+        item { Button({ save(cwa, moenv) }, Modifier.fillMaxWidth()) { Text("儲存設定") } }
+        item {
+            CuteCard {
+                Column {
+                    Text("資料與隱私", fontWeight = FontWeight.Bold)
+                    Text("定位只用來辨識台灣行政區，不會在背景持續定位。拒絕定位後仍可手動選擇地點。", fontSize = 14.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ApiKeyCard(title: String, applyLabel: String, applyUrl: String, value: String, onChange: (String) -> Unit, testState: ApiTestState, test: () -> Unit) {
+    val context = LocalContext.current
+    var visible by remember { mutableStateOf(false) }
+    CuteCard {
+        Column(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                if (testState is ApiTestState.Available) {
+                    Icon(Icons.Default.CheckCircle, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.secondary)
+                    Text(" 可用", color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
+                }
+            }
+            TextButton({ context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(applyUrl))) }, contentPadding = PaddingValues(0.dp)) { Text(applyLabel) }
+            OutlinedTextField(
+                value = value,
+                onValueChange = onChange,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                singleLine = true,
+                visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+                label = { Text("API 授權碼") },
+                trailingIcon = {
+                    Row {
+                        IconButton({ visible = !visible }) {
+                            Icon(if (visible) Icons.Default.VisibilityOff else Icons.Default.Visibility, if (visible) "隱藏授權碼" else "顯示授權碼")
+                        }
+                        if (value.isNotEmpty()) {
+                            IconButton({ onChange("") }) { Icon(Icons.Default.Cancel, "清除授權碼") }
+                        }
+                    }
+                }
+            )
+            if (testState is ApiTestState.Failed) {
+                Text(testState.message, color = MaterialTheme.colorScheme.error, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp))
+            }
+            OutlinedButton(test, enabled = testState !is ApiTestState.Testing && value.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
+                if (testState is ApiTestState.Testing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("連線測試")
+            }
+        }
+    }
+}
+
+@Composable
+private fun CuteCard(onClick: (() -> Unit)? = null, content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
+    Card(
+        onClick = onClick ?: {},
+        enabled = onClick != null,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .94f))
+    ) { Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically, content = content) }
+}
+
+@Composable
+private fun LocationPickerScreen(title: String, options: List<String>, selected: String, onSelect: (String) -> Unit, onBack: () -> Unit) {
+    var query by remember(title) { mutableStateOf("") }
+    val filtered = options.filter { query.isBlank() || it.contains(query, ignoreCase = true) }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+                Text(title, fontSize = 26.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+            }
+        }
+        item {
+            OutlinedTextField(value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("搜尋") }, placeholder = { Text("輸入名稱篩選") })
+        }
+        items(filtered) { item ->
+            Card(onClick = { onSelect(item) }, modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .94f))) {
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(item, Modifier.weight(1f), fontSize = 17.sp, fontWeight = if (item == selected) FontWeight.Bold else FontWeight.Normal)
+                    if (item == selected) Icon(Icons.Default.Check, "已選擇", tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+        }
+    }
+}
+
+@Composable private fun EmptyCard(text: String) = CuteCard {
+    Text(text, Modifier.fillMaxWidth(), textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+private fun weatherSymbol(description: String): String = when {
+    "雷" in description -> "⛈"
+    "雨" in description -> "🌧"
+    "雪" in description -> "🌨"
+    "晴" in description && "雲" in description -> "🌤"
+    "晴" in description -> "☀"
+    "陰" in description -> "☁"
+    else -> "🌥"
+}
