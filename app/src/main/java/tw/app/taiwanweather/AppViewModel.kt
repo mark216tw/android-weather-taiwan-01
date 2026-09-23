@@ -6,9 +6,12 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import tw.app.taiwanweather.data.LoadState
 import tw.app.taiwanweather.data.DisplayMode
+import tw.app.taiwanweather.data.GeoPoint
 import tw.app.taiwanweather.data.Place
 import tw.app.taiwanweather.data.SecureStore
 import tw.app.taiwanweather.data.TaiwanCounties
@@ -33,15 +36,19 @@ data class AppUiState(
     val cwaTestState: ApiTestState = ApiTestState.Idle,
     val moenvTestState: ApiTestState = ApiTestState.Idle,
     val displayMode: DisplayMode = DisplayMode.SYSTEM,
-    val loadingTownships: Boolean = false
+    val loadingTownships: Boolean = false,
+    val isRefreshing: Boolean = false,
+    val refreshError: String? = null
 )
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val store = SecureStore(application)
-    private val repository = WeatherRepository()
+    private val repository = WeatherRepository.create(application)
     private val locationResolver = TaiwanLocationResolver(application)
     private val _ui = MutableStateFlow(AppUiState())
     val ui: StateFlow<AppUiState> = _ui.asStateFlow()
+    private var refreshJob: Job? = null
+    private var selectedCoordinate: GeoPoint? = null
 
     init {
         viewModelScope.launch {
@@ -54,16 +61,45 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 moenvKey = keys.second,
                 displayMode = store.displayMode()
             )
-            if (keys.first.isNotBlank()) refresh()
+            if (keys.first.isNotBlank()) {
+                selectedCoordinate = locationResolver.coordinate(selected)
+                refresh(forceRefresh = false)
+            }
         }
     }
 
-    fun refresh() = viewModelScope.launch {
+    fun refresh(forceRefresh: Boolean = true) {
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch {
         val state = _ui.value
-        _ui.value = state.copy(loadState = LoadState.Loading, message = null)
-        runCatching { repository.report(state.selected, state.cwaKey, state.moenvKey) }
-            .onSuccess { _ui.value = _ui.value.copy(loadState = LoadState.Success(it)) }
-            .onFailure { _ui.value = _ui.value.copy(loadState = LoadState.Error(WeatherRepository.friendlyError(it))) }
+        val oldReport = (state.loadState as? LoadState.Success)?.report
+        _ui.value = state.copy(
+            loadState = if (oldReport == null) LoadState.Loading else state.loadState,
+            isRefreshing = true,
+            refreshError = null,
+            message = null
+        )
+        try {
+            val report = repository.report(
+                state.selected,
+                tw.app.taiwanweather.data.ApiKeys(state.cwaKey, state.moenvKey),
+                selectedCoordinate,
+                forceRefresh
+            )
+            if (_ui.value.selected == state.selected) {
+                _ui.value = _ui.value.copy(loadState = LoadState.Success(report), isRefreshing = false)
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            val message = WeatherRepository.friendlyError(error)
+            _ui.value = _ui.value.copy(
+                loadState = oldReport?.let(LoadState::Success) ?: LoadState.Error(message),
+                isRefreshing = false,
+                refreshError = if (oldReport != null) message else null
+            )
+        }
+        }
     }
 
     fun loadTownships(county: String) = viewModelScope.launch {
@@ -79,8 +115,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             return@launch
         }
         _ui.value = _ui.value.copy(selected = place, townships = emptyList())
+        selectedCoordinate = locationResolver.coordinate(place)
         store.saveSelected(place)
-        refresh()
+        refresh(forceRefresh = false)
     }
 
     fun toggleFavorite(place: Place = _ui.value.selected) = viewModelScope.launch {
@@ -140,8 +177,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun locate() = viewModelScope.launch {
         _ui.value = _ui.value.copy(message = "正在尋找你的位置…")
         locationResolver.currentPlace()
-            .onSuccess { select(it) }
+            .onSuccess {
+                selectedCoordinate = it.coordinate
+                selectResolved(it.place)
+            }
             .onFailure { _ui.value = _ui.value.copy(message = WeatherRepository.friendlyError(it)) }
+    }
+
+    private fun selectResolved(place: Place) = viewModelScope.launch {
+        _ui.value = _ui.value.copy(selected = place, townships = emptyList())
+        store.saveSelected(place)
+        refresh(forceRefresh = false)
     }
 
     fun clearMessage() { _ui.value = _ui.value.copy(message = null) }

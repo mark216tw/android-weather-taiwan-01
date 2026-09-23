@@ -1,60 +1,161 @@
 package tw.app.taiwanweather.data
 
+import android.content.Context
+import androidx.room.Room
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import retrofit2.HttpException
+import tw.app.taiwanweather.data.local.CachedPayload
+import tw.app.taiwanweather.data.local.NoOpWeatherCache
+import tw.app.taiwanweather.data.local.RoomWeatherCache
+import tw.app.taiwanweather.data.local.WeatherCache
+import tw.app.taiwanweather.data.local.WeatherCacheDatabase
+import tw.app.taiwanweather.location.GeoDistance
+import java.time.Clock
+import java.time.Instant
 import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 class WeatherRepository(
     private val cwa: CwaApi = ApiProvider.cwa,
-    private val moenv: MoenvApi = ApiProvider.moenv
+    private val moenv: MoenvApi = ApiProvider.moenv,
+    private val cache: WeatherCache = NoOpWeatherCache,
+    private val clock: Clock = Clock.systemDefaultZone()
 ) {
+    private val flightScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val flightMutex = Mutex()
+    private val flights = mutableMapOf<RequestKey, Deferred<WeatherReport>>()
+
     suspend fun townships(county: String, cwaKey: String): List<String> {
         require(cwaKey.isNotBlank()) { "請先設定中央氣象署授權碼" }
-        val dataset = TaiwanCounties.firstOrNull { it.name == county }?.datasetId
-            ?: error("不支援此縣市")
+        val dataset = TaiwanCounties.firstOrNull { it.name == county }?.datasetId ?: error("不支援此縣市")
         val root = cwa.forecast(dataset, cwaKey)
         ensureCwaSuccess(root)
         return forecastLocations(root).mapNotNull { it.text("LocationName", "locationName") }.distinct()
     }
 
-    suspend fun report(place: Place, cwaKey: String, moenvKey: String): WeatherReport {
-        require(cwaKey.isNotBlank()) { "請先到設定輸入中央氣象署授權碼" }
-        val county = TaiwanCounties.firstOrNull { it.name == place.county } ?: error("不支援此地點天氣")
-        val forecastRoot = cwa.forecast(county.datasetId, cwaKey, locationName = place.township)
-        ensureCwaSuccess(forecastRoot)
-        val location = forecastLocations(forecastRoot).firstOrNull {
-            it.text("LocationName", "locationName") == place.township
-        } ?: error("找不到 ${place.title} 的預報資料")
+    suspend fun report(place: Place, cwaKey: String, moenvKey: String): WeatherReport =
+        report(place, ApiKeys(cwaKey, moenvKey))
 
-        val parsed = parseForecast(location)
-        val observation = runCatching { findObservation(cwa.observations(cwaKey), place) }.getOrNull()
-        val current = observation?.let {
-            parsed.first.copy(
-                temperature = it.temperature.takeUnless(String::isBlank) ?: parsed.first.temperature,
-                humidity = it.humidity.takeUnless(String::isBlank) ?: parsed.first.humidity,
-                description = it.description.takeUnless(String::isBlank) ?: parsed.first.description,
-                wind = it.wind.takeUnless(String::isBlank) ?: parsed.first.wind
+    suspend fun report(
+        place: Place,
+        keys: ApiKeys,
+        target: GeoPoint? = null,
+        forceRefresh: Boolean = false
+    ): WeatherReport {
+        require(keys.cwa.isNotBlank()) { "請先到設定輸入中央氣象署授權碼" }
+        val request = RequestKey(place, keys.cwa, keys.moenv, target, forceRefresh)
+        val deferred = flightMutex.withLock {
+            flights[request] ?: flightScope.async { reportInternal(place, keys, target, forceRefresh) }
+                .also { flights[request] = it }
+        }
+        return try {
+            deferred.await()
+        } finally {
+            flightMutex.withLock { if (flights[request] === deferred && deferred.isCompleted) flights.remove(request) }
+        }
+    }
+
+    private suspend fun reportInternal(
+        place: Place,
+        keys: ApiKeys,
+        target: GeoPoint?,
+        forceRefresh: Boolean
+    ): WeatherReport = supervisorScope {
+        val county = TaiwanCounties.firstOrNull { it.name == place.county } ?: error("不支援此地點天氣")
+        val forecast = async { source(WeatherSource.FORECAST, county.datasetId + ":" + place.township, forceRefresh) {
+            cwa.forecast(county.datasetId, keys.cwa, locationName = place.township).also(::ensureCwaSuccess)
+        } }
+        val observations = async { source(WeatherSource.OBSERVATIONS, "taiwan", forceRefresh) {
+            cwa.observations(keys.cwa).also(::ensureCwaSuccess)
+        } }
+        val alerts = async { source(WeatherSource.ALERTS, "taiwan", forceRefresh) {
+            cwa.alerts(keys.cwa).also(::ensureCwaSuccess)
+        } }
+        val air = async {
+            if (keys.moenv.isBlank()) SourceResult(WeatherSource.AIR, null)
+            else source(WeatherSource.AIR, "taiwan", forceRefresh) { parseMoenvResponse(moenv.airQuality(keys.moenv)) }
+        }
+        val results = listOf(forecast.await(), observations.await(), air.await(), alerts.await())
+        val forecastResult = results[0]
+        val location = forecastResult.root?.let(::forecastLocations)?.firstOrNull {
+            it.text("LocationName", "locationName") == place.township
+        }
+        val parsed = location?.let(::parseForecast) ?: ParsedForecast(CurrentWeather(), emptyList(), emptyList())
+        val observed = results[1].root?.let { findObservation(it, place, target) }
+        val current = observed?.let {
+            parsed.current.copy(
+                temperature = it.temperature.ifBlank { parsed.current.temperature },
+                humidity = it.humidity.ifBlank { parsed.current.humidity },
+                description = it.description.ifBlank { parsed.current.description },
+                wind = it.wind.ifBlank { parsed.current.wind },
+                station = it.station
             )
-        } ?: parsed.first
-        val air = if (moenvKey.isBlank()) null else runCatching {
-            findAirQuality(parseMoenvResponse(moenv.airQuality(moenvKey)), place)
-        }.getOrNull()
-        return WeatherReport(
+        } ?: parsed.current
+        val fetched = results.mapNotNull { it.fetchedAt }.maxOrNull() ?: clock.millis()
+        WeatherReport(
             place = place,
             current = current,
-            forecast = parsed.second,
-            airQuality = air,
-            updatedAt = LocalDateTime.now().format(DateTimeFormatter.ofPattern("MM/dd HH:mm"))
+            forecast = parsed.daily,
+            airQuality = results[2].root?.let { findAirQuality(it, place, target) },
+            updatedAt = Instant.ofEpochMilli(fetched).atZone(clock.zone).format(DateTimeFormatter.ofPattern("MM/dd HH:mm")),
+            hourly = parsed.hourly,
+            alerts = results[3].root?.let { parseAlerts(it, place) }.orEmpty(),
+            issues = results.mapNotNull { it.issue },
+            cache = CacheState(
+                fromCache = results.any { it.fromCache },
+                stale = results.any { it.stale },
+                sources = results.filter { it.fromCache }.map { it.source }.toSet()
+            ),
+            updatedEpochMillis = fetched
         )
+    }
+
+    private suspend fun source(
+        source: WeatherSource,
+        key: String,
+        forceRefresh: Boolean,
+        fetch: suspend () -> JsonObject
+    ): SourceResult {
+        val kind = source.name.lowercase()
+        val cached = cache.get(kind, key)?.takeIf { it.schemaVersion == CACHE_SCHEMA }
+        val fresh = cached != null && clock.millis() - cached.fetchedAt <= ttl(source)
+        if (fresh && !forceRefresh) return SourceResult(source, cached!!.json(), true, false, cached.fetchedAt)
+        return try {
+            val root = fetch()
+            val now = clock.millis()
+            cache.put(CachedPayload(kind, key, root.toString(), now, CACHE_SCHEMA))
+            SourceResult(source, root, fetchedAt = now)
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            if (cached != null) SourceResult(source, cached.json(), true, true, cached.fetchedAt, issue(source, error))
+            else SourceResult(source, null, issue = issue(source, error))
+        }
+    }
+
+    private fun ttl(source: WeatherSource) = when (source) {
+        WeatherSource.FORECAST -> 60 * 60_000L
+        WeatherSource.OBSERVATIONS -> 15 * 60_000L
+        WeatherSource.AIR -> 30 * 60_000L
+        WeatherSource.ALERTS -> 10 * 60_000L
     }
 
     suspend fun testCwa(key: String): String {
@@ -65,15 +166,16 @@ class WeatherRepository(
 
     suspend fun testMoenv(key: String): String {
         require(key.isNotBlank()) { "請輸入環境部 API Key" }
-        val records = parseMoenvResponse(moenv.airQuality(key, limit = 1)).array("records")
-        require(records.isNotEmpty()) { "環境部授權碼無效或查無資料" }
+        require(parseMoenvResponse(moenv.airQuality(key, limit = 1)).array("records").isNotEmpty()) {
+            "環境部授權碼無效或查無資料"
+        }
         return "環境部連線成功"
     }
 
     internal fun parseMoenvBody(body: String): JsonObject {
         val content = body.trim()
         require(content.isNotBlank()) { "環境部沒有回傳資料" }
-        val element = runCatching { Json.parseToJsonElement(content) }.getOrElse {
+        val element = runCatching { JSON.parseToJsonElement(content) }.getOrElse {
             throw IllegalArgumentException(content.take(200))
         }
         return when (element) {
@@ -85,114 +187,171 @@ class WeatherRepository(
 
     private fun parseMoenvResponse(response: retrofit2.Response<okhttp3.ResponseBody>): JsonObject {
         val content = if (response.isSuccessful) response.body()?.string() else response.errorBody()?.string()
-        if (!response.isSuccessful) {
-            val detail = content?.trim()?.takeIf { it.isNotBlank() }
-            throw IllegalArgumentException(detail ?: "環境部資料服務回應錯誤 (${response.code()})")
-        }
+        if (!response.isSuccessful) throw IllegalArgumentException(
+            content?.trim()?.takeIf(String::isNotBlank) ?: "環境部資料服務回應錯誤 (${response.code()})"
+        )
         return parseMoenvBody(content.orEmpty())
     }
 
-    private fun parseForecast(location: JsonObject): Pair<CurrentWeather, List<DailyForecast>> {
-        val elements = location.array("WeatherElement", "weatherElement")
-        val byName = elements.map { it.jsonObject }.associateBy { it.text("ElementName", "elementName").orEmpty() }
-        fun entries(name: String) = byName[name]?.array("Time", "time").orEmpty().map { it.jsonObject }
+    internal fun parseForecast(location: JsonObject): ParsedForecast {
+        val elements = location.array("WeatherElement", "weatherElement").map { it.jsonObject }
+        val byName = elements.associateBy { it.text("ElementName", "elementName").orEmpty() }
+        fun values(name: String): Map<String, JsonObject> = byName[name]?.array("Time", "time").orEmpty()
+            .map { it.jsonObject }.mapNotNull { time -> time.timeKey()?.let { it to time } }.toMap()
         fun value(time: JsonObject?, vararg names: String): String? {
-            val item = time?.array("ElementValue", "elementValue")?.firstOrNull()?.jsonObject ?: return null
-            return names.firstNotNullOfOrNull { item.text(it) } ?: item.values.firstOrNull()?.stringValue()
+            val item = time?.array("ElementValue", "elementValue")?.firstOrNull() as? JsonObject ?: return null
+            return names.firstNotNullOfOrNull { item.text(it) } ?: item.values.firstNotNullOfOrNull { it.stringValue() }
         }
-
-        val weather = entries("天氣現象")
-        val avgTemp = entries("平均溫度")
-        val minTemp = entries("最低溫度")
-        val maxTemp = entries("最高溫度")
-        val humidity = entries("平均相對濕度")
-        val apparent = entries("最高體感溫度")
-        val rain = entries("12小時降雨機率")
-        val windSpeed = entries("風速")
-        val windDirection = entries("風向")
+        val weather = values("天氣現象")
+        val temp = values("平均溫度")
+        val min = values("最低溫度")
+        val max = values("最高溫度")
+        val humidity = values("平均相對濕度")
+        val apparent = values("最高體感溫度")
+        val rain = values("12小時降雨機率")
+        val windSpeed = values("風速")
+        val windDirection = values("風向")
         require(weather.isNotEmpty()) { "氣象署沒有提供此地點資料" }
-
+        fun wind(key: String) = listOfNotNull(
+            value(windDirection[key], "WindDirection", "value"),
+            value(windSpeed[key], "WindSpeed", "value")?.let { "$it m/s" }
+        ).joinToString(" ").ifBlank { "--" }
+        val keys = weather.keys.sorted()
+        val first = keys.first()
         val current = CurrentWeather(
-            temperature = value(avgTemp.firstOrNull(), "Temperature", "value") ?: "--",
-            apparentTemperature = value(apparent.firstOrNull(), "MaxApparentTemperature", "value") ?: "--",
-            description = value(weather.firstOrNull(), "Weather", "value") ?: "--",
-            humidity = value(humidity.firstOrNull(), "RelativeHumidity", "value") ?: "--",
-            rainProbability = value(rain.firstOrNull(), "ProbabilityOfPrecipitation", "value") ?: "--",
-            wind = listOfNotNull(
-                value(windDirection.firstOrNull(), "WindDirection", "value"),
-                value(windSpeed.firstOrNull(), "WindSpeed", "value")?.let { "$it m/s" }
-            ).joinToString(" ").ifBlank { "--" }
+            temperature = value(temp[first], "Temperature", "value") ?: "--",
+            apparentTemperature = value(apparent[first], "MaxApparentTemperature", "value") ?: "--",
+            description = value(weather[first], "Weather", "value") ?: "--",
+            humidity = value(humidity[first], "RelativeHumidity", "value") ?: "--",
+            rainProbability = value(rain[first], "ProbabilityOfPrecipitation", "value") ?: "--",
+            wind = wind(first)
         )
-
-        val days = linkedMapOf<String, MutableList<Int>>()
-        weather.forEachIndexed { index, time ->
-            val date = time.text("StartTime", "startTime")?.take(10) ?: return@forEachIndexed
-            days.getOrPut(date) { mutableListOf() }.add(index)
+        val firstInstant = parseInstant(first)
+        val hourlyKeys = keys.filter { key ->
+            val instant = parseInstant(key)
+            firstInstant == null || instant == null || !instant.isAfter(firstInstant.plusSeconds(48 * 60 * 60))
         }
-        val forecast = days.entries.take(7).map { (date, indexes) ->
-            val mins = indexes.mapNotNull { value(minTemp.getOrNull(it), "MinTemperature", "value")?.toIntOrNull() }
-            val maxs = indexes.mapNotNull { value(maxTemp.getOrNull(it), "MaxTemperature", "value")?.toIntOrNull() }
-            val pops = indexes.mapNotNull { value(rain.getOrNull(it), "ProbabilityOfPrecipitation", "value")?.toIntOrNull() }
-            DailyForecast(
-                date = date,
-                description = value(weather.getOrNull(indexes.first()), "Weather", "value") ?: "--",
-                minTemperature = mins.minOrNull()?.toString() ?: "--",
-                maxTemperature = maxs.maxOrNull()?.toString() ?: "--",
-                rainProbability = pops.maxOrNull()?.toString() ?: "--"
+        val hourly = hourlyKeys.map { key ->
+            HourlyForecast(
+                startTime = weather[key]?.text("StartTime", "startTime") ?: key,
+                dataTime = weather[key]?.text("DataTime", "dataTime"),
+                temperature = value(temp[key], "Temperature", "value") ?: "--",
+                description = value(weather[key], "Weather", "value") ?: "--",
+                rainProbability = value(rain[key], "ProbabilityOfPrecipitation", "value") ?: "--",
+                humidity = value(humidity[key], "RelativeHumidity", "value") ?: "--",
+                apparentTemperature = value(apparent[key], "MaxApparentTemperature", "value") ?: "--",
+                wind = wind(key)
             )
         }
-        return current to forecast
+        val daily = keys.groupBy { it.take(10) }.entries.take(7).map { (date, dayKeys) ->
+            DailyForecast(
+                date,
+                value(weather[dayKeys.first()], "Weather", "value") ?: "--",
+                dayKeys.mapNotNull { value(min[it], "MinTemperature", "value")?.toIntOrNull() }.minOrNull()?.toString() ?: "--",
+                dayKeys.mapNotNull { value(max[it], "MaxTemperature", "value")?.toIntOrNull() }.maxOrNull()?.toString() ?: "--",
+                dayKeys.mapNotNull { value(rain[it], "ProbabilityOfPrecipitation", "value")?.toIntOrNull() }.maxOrNull()?.toString() ?: "--"
+            )
+        }
+        return ParsedForecast(current, daily, hourly)
     }
 
-    private fun findObservation(root: JsonObject, place: Place): CurrentWeather? {
-        ensureCwaSuccess(root)
+    private fun findObservation(root: JsonObject, place: Place, target: GeoPoint?): CurrentWeather? {
         val stations = root.obj("records")?.array("Station", "station", "location").orEmpty().map { it.jsonObject }
-        val station = stations.firstOrNull {
-            val geo = it.obj("GeoInfo", "geoInfo")
-            normalize(geo?.text("CountyName", "countyName")) == normalize(place.county) &&
-                normalize(geo?.text("TownName", "townName")) == normalize(place.township)
-        } ?: stations.firstOrNull {
-            normalize(it.obj("GeoInfo", "geoInfo")?.text("CountyName", "countyName")) == normalize(place.county)
-        } ?: return null
-        val weather = station.obj("WeatherElement", "weatherElement") ?: return null
-        fun valid(vararg keys: String) = weather.text(*keys)?.toDoubleOrNull()?.takeIf { it > -90 }?.let { n ->
-            if (n % 1.0 == 0.0) n.toInt().toString() else "%.1f".format(n)
-        }.orEmpty()
+        val candidates = stations.mapNotNull { station ->
+            val weather = station.obj("WeatherElement", "weatherElement") ?: return@mapNotNull null
+            val temperature = weather.text("AirTemperature", "airTemperature").validNumber() ?: return@mapNotNull null
+            val geo = station.obj("GeoInfo", "geoInfo")
+            val coordinate = station.coordinate() ?: geo?.coordinate()
+            Observation(station, weather, geo, coordinate, temperature)
+        }
+        val selected = if (target != null) candidates.filter { it.coordinate != null }.minByOrNull {
+            GeoDistance.kilometers(target, it.coordinate!!)
+        } else candidates.firstOrNull {
+            normalize(it.geo?.text("CountyName", "countyName")) == normalize(place.county) &&
+                normalize(it.geo?.text("TownName", "townName")) == normalize(place.township)
+        } ?: candidates.firstOrNull { normalize(it.geo?.text("CountyName", "countyName")) == normalize(place.county) }
+        selected ?: return null
+        fun valid(vararg keys: String) = selected.weather.text(*keys).validNumber().orEmpty()
+        val distance = target?.let { selected.coordinate?.let { point -> GeoDistance.kilometers(it, point) } }
+        val stationInfo = StationInfo(
+            selected.station.text("StationName", "stationName", "locationName").orEmpty(),
+            selected.station.deepText("ObsTime", "obsTime", "DateTime", "dateTime").orEmpty(),
+            selected.coordinate,
+            distance
+        )
         return CurrentWeather(
-            temperature = valid("AirTemperature", "airTemperature"),
-            description = weather.text("Weather", "weather").orEmpty().takeUnless { it == "-99" }.orEmpty(),
+            temperature = selected.temperature,
+            description = selected.weather.text("Weather", "weather").orEmpty().takeUnless { it == "-99" }.orEmpty(),
             humidity = valid("RelativeHumidity", "relativeHumidity"),
-            wind = valid("WindSpeed", "windSpeed").let { if (it.isBlank()) "" else "$it m/s" }
+            wind = valid("WindSpeed", "windSpeed").let { if (it.isBlank()) "" else "$it m/s" },
+            station = stationInfo
         )
     }
 
-    private fun findAirQuality(root: JsonObject, place: Place): AirQuality? {
-        val records = root.array("records").map { it.jsonObject }
-        val record = records.firstOrNull { normalize(it.text("county")) == normalize(place.county) }
-            ?: return null
+    private fun findAirQuality(root: JsonObject, place: Place, target: GeoPoint?): AirQuality? {
+        val records = root.array("records").map { it.jsonObject }.filter { it.text("aqi")?.toDoubleOrNull() != null }
+        val selected = if (target != null) records.mapNotNull { record -> record.coordinate()?.let { record to it } }
+            .minByOrNull { GeoDistance.kilometers(target, it.second) }?.first
+        else records.firstOrNull { normalize(it.text("county")) == normalize(place.county) && normalize(it.text("township")) == normalize(place.township) }
+            ?: records.firstOrNull { normalize(it.text("county")) == normalize(place.county) }
+        selected ?: return null
+        val point = selected.coordinate()
         return AirQuality(
-            aqi = record.text("aqi").orEmpty().ifBlank { "--" },
-            status = record.text("status").orEmpty().ifBlank { "無資料" },
-            pm25 = record.text("pm2.5", "pm2_5").orEmpty().ifBlank { "--" },
-            siteName = record.text("sitename").orEmpty(),
-            publishTime = record.text("publishtime").orEmpty()
+            selected.text("aqi").orEmpty().ifBlank { "--" },
+            selected.text("status").orEmpty().ifBlank { "無資料" },
+            selected.text("pm2.5", "pm2_5").orEmpty().ifBlank { "--" },
+            selected.text("sitename").orEmpty(),
+            selected.text("publishtime").orEmpty(),
+            StationInfo(selected.text("sitename").orEmpty(), selected.text("publishtime").orEmpty(), point,
+                target?.let { point?.let { p -> GeoDistance.kilometers(it, p) } })
         )
+    }
+
+    internal fun parseAlerts(root: JsonObject, place: Place): List<WeatherAlert> {
+        val now = clock.instant()
+        return root.descendantObjects().mapNotNull { item ->
+            val title = item.text("headline", "title", "phenomena", "event") ?: return@mapNotNull null
+            val areas = item.deepStrings("areaDesc", "areaName", "locationName", "geocode", "affectedAreas")
+            if (areas.none { normalize(it).contains(normalize(place.county)) || normalize(it).contains(normalize(place.township)) }) return@mapNotNull null
+            val expires = item.deepText("expires", "endTime", "effectiveEndTime", "expireTime").orEmpty()
+            parseInstant(expires)?.let { if (it.isBefore(now)) return@mapNotNull null }
+            WeatherAlert(
+                id = item.deepText("identifier", "id", "capId") ?: "$title:${expires}",
+                title = title,
+                description = item.deepText("description", "descriptionText", "instruction", "content").orEmpty(),
+                issuedAt = item.deepText("sent", "issueTime", "effective", "startTime").orEmpty(),
+                expiresAt = expires,
+                affectedAreas = areas.distinct()
+            )
+        }.distinctBy { it.id }.toList()
     }
 
     private fun ensureCwaSuccess(root: JsonObject) {
-        val success = root.text("success")
-        require(success == "true") { root.obj("result")?.text("message") ?: "中央氣象署授權碼無效" }
+        require(root.text("success") != "false") { root.obj("result")?.text("message") ?: "中央氣象署授權碼無效" }
     }
 
     private fun forecastLocations(root: JsonObject): List<JsonObject> {
         val records = root.obj("records") ?: return emptyList()
-        val groups = records.array("Locations", "locations")
-        return groups.firstOrNull()?.jsonObject?.array("Location", "location").orEmpty().map { it.jsonObject }
+        return records.array("Locations", "locations").firstOrNull()?.jsonObject
+            ?.array("Location", "location").orEmpty().map { it.jsonObject }
     }
 
+    private fun issue(source: WeatherSource, error: Throwable) = SourceIssue(source, friendlyError(error))
     private fun normalize(value: String?) = value.orEmpty().replace("台", "臺")
 
     companion object {
+        private const val CACHE_SCHEMA = 1
+        private val JSON = Json { ignoreUnknownKeys = true; isLenient = true }
+
+        fun create(context: Context, clock: Clock = Clock.systemDefaultZone()): WeatherRepository {
+            val database = Room.databaseBuilder(
+                context.applicationContext,
+                WeatherCacheDatabase::class.java,
+                "weather-cache.db"
+            ).build()
+            return WeatherRepository(cache = RoomWeatherCache(database.cacheDao()), clock = clock)
+        }
+
         fun friendlyError(error: Throwable): String = when (error) {
             is HttpException -> when (error.code()) {
                 401, 403 -> "授權碼無效或已過期"
@@ -204,12 +363,73 @@ class WeatherRepository(
             else -> error.message ?: "讀取資料失敗"
         }
     }
+
+    internal data class ParsedForecast(
+        val current: CurrentWeather,
+        val daily: List<DailyForecast>,
+        val hourly: List<HourlyForecast>
+    )
+
+    private data class RequestKey(val place: Place, val cwa: String, val moenv: String, val target: GeoPoint?, val force: Boolean)
+    private data class SourceResult(
+        val source: WeatherSource,
+        val root: JsonObject?,
+        val fromCache: Boolean = false,
+        val stale: Boolean = false,
+        val fetchedAt: Long? = null,
+        val issue: SourceIssue? = null
+    )
+    private data class Observation(
+        val station: JsonObject,
+        val weather: JsonObject,
+        val geo: JsonObject?,
+        val coordinate: GeoPoint?,
+        val temperature: String
+    )
 }
 
-private fun JsonObject.text(vararg keys: String): String? = keys.firstNotNullOfOrNull { key ->
-    get(key)?.stringValue()
+private fun CachedPayload.json() = Json.parseToJsonElement(payload).jsonObject
+private fun String?.validNumber(): String? = this?.toDoubleOrNull()?.takeIf { it > -90 }?.let {
+    if (it % 1.0 == 0.0) it.toInt().toString() else "%.1f".format(it)
 }
-
+private fun JsonObject.timeKey() = text("StartTime", "startTime", "DataTime", "dataTime")
+private fun JsonObject.coordinate(): GeoPoint? {
+    fun JsonObject.direct(): GeoPoint? {
+        val lat = text("StationLatitude", "stationLatitude", "latitude", "Latitude", "lat")?.toDoubleOrNull()
+        val lon = text("StationLongitude", "stationLongitude", "longitude", "Longitude", "lon")?.toDoubleOrNull()
+        return if (lat != null && lon != null && lat in -90.0..90.0 && lon in -180.0..180.0) GeoPoint(lat, lon) else null
+    }
+    direct()?.let { return it }
+    return descendantObjects().firstOrNull {
+        it.text("CoordinateName", "coordinateName")?.contains("WGS84", ignoreCase = true) == true
+    }?.direct() ?: descendantObjects().firstNotNullOfOrNull { it.direct() }
+}
+private fun JsonObject.descendantObjects(): Sequence<JsonObject> = sequence {
+    yield(this@descendantObjects)
+    values.forEach { value ->
+        when (value) {
+            is JsonObject -> yieldAll(value.descendantObjects())
+            is JsonArray -> value.forEach { if (it is JsonObject) yieldAll(it.descendantObjects()) }
+            else -> Unit
+        }
+    }
+}
+private fun JsonObject.deepText(vararg keys: String): String? = descendantObjects().firstNotNullOfOrNull { it.text(*keys) }
+private fun JsonObject.deepStrings(vararg keys: String): List<String> = descendantObjects().flatMap { obj ->
+    keys.asSequence().mapNotNull { obj[it] }.flatMap { value ->
+        when (value) {
+            is JsonArray -> value.asSequence().mapNotNull { it.stringValue() ?: (it as? JsonObject)?.deepText("value", "areaDesc", "areaName") }
+            else -> sequenceOf(value.stringValue()).filterNotNull()
+        }
+    }
+}.toList()
+private fun parseInstant(value: String): Instant? {
+    if (value.isBlank()) return null
+    return runCatching { Instant.parse(value) }.getOrNull()
+        ?: runCatching { OffsetDateTime.parse(value).toInstant() }.getOrNull()
+        ?: runCatching { LocalDateTime.parse(value, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")).atZone(ZoneId.of("Asia/Taipei")).toInstant() }.getOrNull()
+}
+private fun JsonObject.text(vararg keys: String): String? = keys.firstNotNullOfOrNull { get(it)?.stringValue() }
 private fun JsonElement.stringValue(): String? = runCatching { jsonPrimitive.content }.getOrNull()
 private fun JsonObject.obj(vararg keys: String): JsonObject? = keys.firstNotNullOfOrNull { get(it) as? JsonObject }
 private fun JsonObject.array(vararg keys: String): JsonArray = keys.firstNotNullOfOrNull { get(it) as? JsonArray } ?: JsonArray(emptyList())

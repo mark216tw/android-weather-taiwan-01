@@ -41,7 +41,7 @@
 
 ### prerelease
 
-- 目前版本名稱：`1.0.0-prerelease`。
+- 目前版本名稱：`1.1.0-prerelease`。
 - 繼承 release 最佳化設定。
 - `isMinifyEnabled = true`。
 - `isShrinkResources = true`。

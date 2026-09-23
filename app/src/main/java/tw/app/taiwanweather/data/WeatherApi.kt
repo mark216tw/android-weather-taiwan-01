@@ -25,6 +25,12 @@ interface CwaApi {
         @Query("Authorization") key: String,
         @Query("format") format: String = "JSON"
     ): JsonObject
+
+    @GET("api/v1/rest/datastore/W-C0033-001")
+    suspend fun alerts(
+        @Query("Authorization") key: String,
+        @Query("format") format: String = "JSON"
+    ): JsonObject
 }
 
 interface MoenvApi {

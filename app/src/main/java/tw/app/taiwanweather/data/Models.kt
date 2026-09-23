@@ -22,13 +22,43 @@ data class Place(val county: String, val township: String) {
     val title get() = "$county $township"
 }
 
+data class GeoPoint(val latitude: Double, val longitude: Double)
+
+data class StationInfo(
+    val name: String,
+    val observedAt: String = "",
+    val location: GeoPoint? = null,
+    val distanceKm: Double? = null
+)
+
 data class CurrentWeather(
     val temperature: String = "--",
     val apparentTemperature: String = "--",
     val description: String = "尚無資料",
     val humidity: String = "--",
     val rainProbability: String = "--",
+    val wind: String = "--",
+    val station: StationInfo? = null
+)
+
+data class HourlyForecast(
+    val startTime: String,
+    val dataTime: String? = null,
+    val temperature: String = "--",
+    val description: String = "--",
+    val rainProbability: String = "--",
+    val humidity: String = "--",
+    val apparentTemperature: String = "--",
     val wind: String = "--"
+)
+
+data class WeatherAlert(
+    val id: String,
+    val title: String,
+    val description: String = "",
+    val issuedAt: String = "",
+    val expiresAt: String = "",
+    val affectedAreas: List<String> = emptyList()
 )
 
 data class DailyForecast(
@@ -44,15 +74,33 @@ data class AirQuality(
     val status: String,
     val pm25: String,
     val siteName: String,
-    val publishTime: String
+    val publishTime: String,
+    val station: StationInfo? = null
 )
+
+enum class WeatherSource { FORECAST, OBSERVATIONS, AIR, ALERTS }
+
+data class SourceIssue(val source: WeatherSource, val message: String)
+
+data class CacheState(
+    val fromCache: Boolean = false,
+    val stale: Boolean = false,
+    val sources: Set<WeatherSource> = emptySet()
+)
+
+data class ApiKeys(val cwa: String, val moenv: String = "")
 
 data class WeatherReport(
     val place: Place,
     val current: CurrentWeather,
     val forecast: List<DailyForecast>,
     val airQuality: AirQuality?,
-    val updatedAt: String
+    val updatedAt: String,
+    val hourly: List<HourlyForecast> = emptyList(),
+    val alerts: List<WeatherAlert> = emptyList(),
+    val issues: List<SourceIssue> = emptyList(),
+    val cache: CacheState = CacheState(),
+    val updatedEpochMillis: Long = 0L
 )
 
 sealed interface LoadState {

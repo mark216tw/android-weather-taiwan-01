@@ -75,7 +75,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 app/build/outputs/apk/prerelease/app-prerelease.apk
 ```
 
-版本名稱：`1.0.0-prerelease`
+版本名稱：`1.1.0-prerelease`
 
 ## 權限
 
