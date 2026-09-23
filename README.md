@@ -96,6 +96,7 @@ APP 不要求背景定位；拒絕定位後仍可手動選擇地點。
 - [系統設計](docs/SYSTEM_DESIGN.md)
 - [建置與發行](docs/BUILD_AND_RELEASE.md)
 - [隱私說明](docs/PRIVACY.md)
+- [開發藍圖](docs/ROADMAP.md)
 - [安全政策](SECURITY.md)
 - [貢獻指南](CONTRIBUTING.md)
 - [版本紀錄](CHANGELOG.md)
