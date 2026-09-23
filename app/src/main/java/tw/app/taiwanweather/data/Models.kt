@@ -2,8 +2,6 @@ package tw.app.taiwanweather.data
 
 data class TaiwanCounty(val name: String, val datasetId: String, val defaultTownship: String)
 
-enum class DisplayMode { SYSTEM, LIGHT, DARK }
-
 val TaiwanCounties = listOf(
     TaiwanCounty("宜蘭縣", "F-D0047-003", "宜蘭市"), TaiwanCounty("桃園市", "F-D0047-007", "桃園區"),
     TaiwanCounty("新竹縣", "F-D0047-011", "竹北市"), TaiwanCounty("苗栗縣", "F-D0047-015", "苗栗市"),

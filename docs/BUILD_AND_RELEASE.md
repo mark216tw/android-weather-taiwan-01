@@ -41,7 +41,7 @@
 
 ### prerelease
 
-- 目前版本名稱：`1.1.0-prerelease`。
+- 目前版本名稱：`1.2.0-prerelease`。
 - 繼承 release 最佳化設定。
 - `isMinifyEnabled = true`。
 - `isShrinkResources = true`。
@@ -79,7 +79,7 @@ Get-FileHash -Algorithm SHA256 app/build/outputs/apk/prerelease/app-prerelease.a
 - 測試與 Lint 通過。
 - CWA 與 MOENV 連線測試可正常使用。
 - GPS 權限允許及拒絕流程已測試。
-- 系統、淺色、深色模式已測試。
+- 日出日落自動切換淺色、深色模式已測試。
 - API Key 未出現在原始碼、Log 或 APK 資源。
 - `versionCode` 已遞增。
 - `versionName` 符合發行版本。

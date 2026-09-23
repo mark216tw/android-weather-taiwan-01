@@ -7,16 +7,21 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import tw.app.taiwanweather.data.LoadState
-import tw.app.taiwanweather.data.DisplayMode
 import tw.app.taiwanweather.data.GeoPoint
 import tw.app.taiwanweather.data.Place
 import tw.app.taiwanweather.data.SecureStore
+import tw.app.taiwanweather.data.SunCalculator
+import tw.app.taiwanweather.data.SunTimes
+import tw.app.taiwanweather.data.TAIPEI_ZONE
 import tw.app.taiwanweather.data.TaiwanCounties
 import tw.app.taiwanweather.data.WeatherRepository
 import tw.app.taiwanweather.location.TaiwanLocationResolver
+import java.time.Instant
+import java.time.LocalDate
 
 sealed interface ApiTestState {
     data object Idle : ApiTestState
@@ -35,10 +40,12 @@ data class AppUiState(
     val message: String? = null,
     val cwaTestState: ApiTestState = ApiTestState.Idle,
     val moenvTestState: ApiTestState = ApiTestState.Idle,
-    val displayMode: DisplayMode = DisplayMode.SYSTEM,
     val loadingTownships: Boolean = false,
     val isRefreshing: Boolean = false,
-    val refreshError: String? = null
+    val refreshError: String? = null,
+    val coordinate: GeoPoint? = null,
+    val sunTimes: SunTimes? = null,
+    val isDarkBySun: Boolean? = null
 )
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
@@ -48,6 +55,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _ui = MutableStateFlow(AppUiState())
     val ui: StateFlow<AppUiState> = _ui.asStateFlow()
     private var refreshJob: Job? = null
+    private var sunJob: Job? = null
     private var selectedCoordinate: GeoPoint? = null
 
     init {
@@ -58,11 +66,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 selected = selected,
                 favorites = store.favorites(),
                 cwaKey = keys.first,
-                moenvKey = keys.second,
-                displayMode = store.displayMode()
+                moenvKey = keys.second
             )
+            selectedCoordinate = locationResolver.coordinate(selected)
+            updateSunState(selectedCoordinate)
             if (keys.first.isNotBlank()) {
-                selectedCoordinate = locationResolver.coordinate(selected)
                 refresh(forceRefresh = false)
             }
         }
@@ -116,6 +124,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
         _ui.value = _ui.value.copy(selected = place, townships = emptyList())
         selectedCoordinate = locationResolver.coordinate(place)
+        updateSunState(selectedCoordinate)
         store.saveSelected(place)
         refresh(forceRefresh = false)
     }
@@ -169,16 +178,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resetMoenvTest() { _ui.value = _ui.value.copy(moenvTestState = ApiTestState.Idle) }
 
-    fun setDisplayMode(mode: DisplayMode) = viewModelScope.launch {
-        _ui.value = _ui.value.copy(displayMode = mode)
-        store.saveDisplayMode(mode)
-    }
-
     fun locate() = viewModelScope.launch {
         _ui.value = _ui.value.copy(message = "正在尋找你的位置…")
         locationResolver.currentPlace()
             .onSuccess {
                 selectedCoordinate = it.coordinate
+                updateSunState(selectedCoordinate)
                 selectResolved(it.place)
             }
             .onFailure { _ui.value = _ui.value.copy(message = WeatherRepository.friendlyError(it)) }
@@ -188,6 +193,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _ui.value = _ui.value.copy(selected = place, townships = emptyList())
         store.saveSelected(place)
         refresh(forceRefresh = false)
+    }
+
+    private fun updateSunState(point: GeoPoint?) {
+        sunJob?.cancel()
+        if (point == null) {
+            _ui.value = _ui.value.copy(coordinate = null, sunTimes = null, isDarkBySun = null)
+            return
+        }
+        sunJob = viewModelScope.launch {
+            while (true) {
+                val now = Instant.now()
+                val times = SunCalculator.calculate(LocalDate.now(TAIPEI_ZONE), point)
+                _ui.value = _ui.value.copy(
+                    coordinate = point,
+                    sunTimes = times,
+                    isDarkBySun = times?.let { SunCalculator.isDark(now, it) }
+                )
+                delay(60_000L)
+            }
+        }
     }
 
     fun clearMessage() { _ui.value = _ui.value.copy(message = null) }

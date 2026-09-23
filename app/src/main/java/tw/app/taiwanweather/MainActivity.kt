@@ -19,7 +19,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import tw.app.taiwanweather.ui.TaiwanWeatherApp
 import tw.app.taiwanweather.ui.TaiwanWeatherTheme
-import tw.app.taiwanweather.data.DisplayMode
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -29,8 +28,8 @@ class MainActivity : ComponentActivity() {
             val viewModel: AppViewModel = viewModel()
             val state by viewModel.ui.collectAsStateWithLifecycle()
             val systemDark = isSystemInDarkTheme()
-            val dark = state.displayMode == DisplayMode.DARK || state.displayMode == DisplayMode.SYSTEM && systemDark
-            TaiwanWeatherTheme(state.displayMode) {
+            val dark = state.isDarkBySun ?: systemDark
+            TaiwanWeatherTheme(dark) {
                 SideEffect {
                     enableEdgeToEdge(
                         statusBarStyle = if (dark) SystemBarStyle.dark(0xFF171217.toInt()) else SystemBarStyle.light(0xFFFFF7FA.toInt(), 0xFF171217.toInt()),

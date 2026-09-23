@@ -24,7 +24,7 @@
 - `AirQuality`：AQI、PM2.5、狀態及測站。
 - `WeatherReport`：主畫面所需的完整聚合資料。
 - `LoadState`：Idle、Loading、Success、Error。
-- `DisplayMode`：SYSTEM、LIGHT、DARK。
+- `SunTimes`：目前地點當日的日出與日落時間。
 
 ## CWA API
 
@@ -98,7 +98,7 @@ api_key=<使用者金鑰>&offset=0&limit=1000&format=json
 
 ## 主題與系統列
 
-`DisplayMode.SYSTEM` 使用 `isSystemInDarkTheme()`；其他模式強制指定明暗配色。`MainActivity` 使用 `enableEdgeToEdge` 與 `SystemBarStyle` 同步狀態列及系統 Navigation Bar。
+`SunCalculator` 依日期與地點座標在本機計算日出日落。日出至日落使用淺色主題，其餘時間使用深色主題；無座標時暫時使用 `isSystemInDarkTheme()`。`MainActivity` 使用 `enableEdgeToEdge` 與 `SystemBarStyle` 同步狀態列及系統 Navigation Bar。
 
 ## R8 規則
 

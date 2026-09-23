@@ -37,7 +37,6 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowDropUp
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -58,7 +57,6 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -91,10 +89,10 @@ import tw.app.taiwanweather.AppUiState
 import tw.app.taiwanweather.AppViewModel
 import tw.app.taiwanweather.ApiTestState
 import tw.app.taiwanweather.data.DailyForecast
-import tw.app.taiwanweather.data.DisplayMode
 import tw.app.taiwanweather.data.AqiLevel
 import tw.app.taiwanweather.data.LoadState
 import tw.app.taiwanweather.data.Place
+import tw.app.taiwanweather.data.SunTimes
 import tw.app.taiwanweather.data.TaiwanCounties
 import tw.app.taiwanweather.data.WeatherReport
 import tw.app.taiwanweather.data.aqiHealthAdvice
@@ -165,8 +163,7 @@ fun TaiwanWeatherApp(viewModel: AppViewModel, requestLocation: () -> Unit) {
                     viewModel::testCwa,
                     viewModel::testMoenv,
                     viewModel::resetCwaTest,
-                    viewModel::resetMoenvTest,
-                    viewModel::setDisplayMode
+                    viewModel::resetMoenvTest
                 )
                 AppScreen.CountyPicker -> LocationPickerScreen("選擇縣市", TaiwanCounties.map { it.name }, draftCounty, { draftCounty = it; draftTownship = TaiwanCounties.first { c -> c.name == it }.defaultTownship; viewModel.loadTownships(it); screen = AppScreen.Locations }, { screen = AppScreen.Locations })
                 AppScreen.TownshipPicker -> LocationPickerScreen("選擇鄉鎮市區", state.townships, draftTownship, { draftTownship = it; screen = AppScreen.Locations }, { screen = AppScreen.Locations })
@@ -220,13 +217,14 @@ internal fun HomeScreen(
                 Spacer(Modifier.height(8.dp))
                 Button(onClick = refresh, modifier = Modifier.fillMaxWidth()) { Text("再試一次") }
             }
-            is LoadState.Success -> reportItems(load.report, state.refreshError, state.moenvKey.isBlank(), refresh, openSettings)
+            is LoadState.Success -> reportItems(load.report, state.sunTimes, state.refreshError, state.moenvKey.isBlank(), refresh, openSettings)
         }
     }
 }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.reportItems(
     report: WeatherReport,
+    sunTimes: SunTimes?,
     refreshError: String?,
     missingMoenvKey: Boolean,
     refresh: () -> Unit,
@@ -263,7 +261,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.reportItems(
             }
         }
     }
-    item { CurrentWeatherCard(report) }
+    item { CurrentWeatherCard(report, sunTimes) }
     if (missingMoenvKey) item {
         CuteCard {
             Text("尚未設定環境部 API Key", fontWeight = FontWeight.Bold)
@@ -343,7 +341,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.reportItems(
 }
 
 @Composable
-private fun CurrentWeatherCard(report: WeatherReport) {
+private fun CurrentWeatherCard(report: WeatherReport, sunTimes: SunTimes?) {
     Card(
         shape = RoundedCornerShape(32.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
@@ -363,6 +361,13 @@ private fun CurrentWeatherCard(report: WeatherReport) {
                 Metric("濕度", "${report.current.humidity}%")
                 Metric("降雨", "${report.current.rainProbability}%")
                 Metric("風", report.current.wind)
+            }
+            sunTimes?.let {
+                HorizontalDivider(Modifier.padding(vertical = 14.dp), color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .14f))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    Metric("日出", it.sunriseText())
+                    Metric("日落", it.sunsetText())
+                }
             }
             Text(
                 todayWeatherSummary(report),
@@ -495,8 +500,7 @@ private fun SettingsScreen(
     testCwa: (String) -> Unit,
     testMoenv: (String) -> Unit,
     resetCwaTest: () -> Unit,
-    resetMoenvTest: () -> Unit,
-    setDisplayMode: (DisplayMode) -> Unit
+    resetMoenvTest: () -> Unit
 ) {
     var cwa by remember(state.cwaKey) { mutableStateOf(state.cwaKey) }
     var moenv by remember(state.moenvKey) { mutableStateOf(state.moenvKey) }
@@ -508,32 +512,6 @@ private fun SettingsScreen(
             }
         }
         item { Text("授權碼只會加密儲存在這台裝置，不會傳送到其他伺服器。") }
-        item {
-            CuteCard {
-                Column(Modifier.fillMaxWidth()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Palette, null, tint = MaterialTheme.colorScheme.primary)
-                        Text("顯示模式", Modifier.padding(start = 10.dp), fontWeight = FontWeight.Bold)
-                    }
-                    Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(
-                            DisplayMode.SYSTEM to "系統",
-                            DisplayMode.LIGHT to "淺色",
-                            DisplayMode.DARK to "深色"
-                        ).forEach { (mode, label) ->
-                            FilterChip(
-                                selected = state.displayMode == mode,
-                                onClick = { setDisplayMode(mode) },
-                                label = { Text(label) },
-                                leadingIcon = if (state.displayMode == mode) {{ Icon(Icons.Default.Check, null, Modifier.size(16.dp)) }} else null,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
-                    Text("選擇後立即生效", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
         item {
             ApiKeyCard("中央氣象署 CWA", "申請中央氣象署授權碼", "https://opendata.cwa.gov.tw/index", cwa, {
                 cwa = it

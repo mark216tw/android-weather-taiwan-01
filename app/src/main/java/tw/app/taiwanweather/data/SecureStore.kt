@@ -21,7 +21,6 @@ class SecureStore(private val context: Context) {
     private val moenvKey = stringPreferencesKey("moenv_api_key")
     private val favoritesKey = stringPreferencesKey("favorites")
     private val selectedKey = stringPreferencesKey("selected")
-    private val displayModeKey = stringPreferencesKey("display_mode")
 
     suspend fun apiKeys(): Pair<String, String> {
         val values = context.dataStore.data.first()
@@ -46,14 +45,6 @@ class SecureStore(private val context: Context) {
 
     suspend fun saveSelected(place: Place) {
         context.dataStore.edit { it[selectedKey] = "${place.county}::${place.township}" }
-    }
-
-    suspend fun displayMode(): DisplayMode = runCatching {
-        DisplayMode.valueOf(context.dataStore.data.first()[displayModeKey] ?: DisplayMode.SYSTEM.name)
-    }.getOrDefault(DisplayMode.SYSTEM)
-
-    suspend fun saveDisplayMode(mode: DisplayMode) {
-        context.dataStore.edit { it[displayModeKey] = mode.name }
     }
 
     private fun decodePlace(raw: String): Place? {

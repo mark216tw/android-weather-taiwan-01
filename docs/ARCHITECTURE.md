@@ -54,12 +54,12 @@ app/src/main/
 - 建立 Compose 內容。
 - 提供 `AppViewModel`。
 - 處理定位權限請求。
-- 根據顯示模式更新狀態列及 Navigation Bar。
+- 根據日出日落狀態更新主題、狀態列及 Navigation Bar。
 
 ### AppViewModel
 
 - 保存單一 `AppUiState`。
-- 協調天氣讀取、位置解析、收藏與設定。
+- 協調天氣讀取、位置解析、收藏、日出日落與設定。
 - 將 Repository 例外轉為 UI 狀態。
 - 使用 `StateFlow` 對 Compose 發布狀態。
 
@@ -72,7 +72,7 @@ app/src/main/
 
 ### SecureStore
 
-- 使用 Preferences DataStore 保存收藏、目前地點及顯示模式。
+- 使用 Preferences DataStore 保存收藏及目前地點。
 - 使用 Android Keystore 建立不可匯出的 AES 金鑰。
 - 使用 AES-GCM 加密兩組 API Key 後再存入 DataStore。
 

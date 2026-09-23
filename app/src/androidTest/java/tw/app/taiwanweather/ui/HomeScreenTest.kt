@@ -8,12 +8,13 @@ import org.junit.Test
 import tw.app.taiwanweather.AppUiState
 import tw.app.taiwanweather.data.CacheState
 import tw.app.taiwanweather.data.CurrentWeather
-import tw.app.taiwanweather.data.DisplayMode
 import tw.app.taiwanweather.data.HourlyForecast
 import tw.app.taiwanweather.data.LoadState
 import tw.app.taiwanweather.data.Place
+import tw.app.taiwanweather.data.SunTimes
 import tw.app.taiwanweather.data.WeatherAlert
 import tw.app.taiwanweather.data.WeatherReport
+import java.time.Instant
 
 class HomeScreenTest {
     @get:Rule
@@ -32,9 +33,15 @@ class HomeScreenTest {
             cache = CacheState(fromCache = true, stale = true)
         )
         compose.setContent {
-            TaiwanWeatherTheme(DisplayMode.LIGHT) {
+            TaiwanWeatherTheme(dark = false) {
                 HomeScreen(
-                    state = AppUiState(loadState = LoadState.Success(report)),
+                    state = AppUiState(
+                        loadState = LoadState.Success(report),
+                        sunTimes = SunTimes(
+                            Instant.parse("2026-09-23T21:45:00Z"),
+                            Instant.parse("2026-09-24T09:50:00Z")
+                        )
+                    ),
                     refresh = {},
                     locate = {},
                     chooseLocation = {},
@@ -46,5 +53,7 @@ class HomeScreenTest {
         compose.onNodeWithText("目前顯示已儲存資料，內容可能已過期").assertIsDisplayed()
         compose.onNodeWithText("豪雨特報").assertIsDisplayed()
         compose.onNodeWithText("未來 48 小時分時預報").assertIsDisplayed()
+        compose.onNodeWithText("日出").assertIsDisplayed()
+        compose.onNodeWithText("日落").assertIsDisplayed()
     }
 }

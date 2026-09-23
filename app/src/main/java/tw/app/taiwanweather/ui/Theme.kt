@@ -4,9 +4,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.graphics.Color
-import tw.app.taiwanweather.data.DisplayMode
 
 private val SakuraColors = lightColorScheme(
     primary = Color(0xFFD95F8D),
@@ -42,11 +40,6 @@ private val MidnightSakuraColors = darkColorScheme(
 )
 
 @Composable
-fun TaiwanWeatherTheme(mode: DisplayMode, content: @Composable () -> Unit) {
-    val dark = when (mode) {
-        DisplayMode.SYSTEM -> isSystemInDarkTheme()
-        DisplayMode.LIGHT -> false
-        DisplayMode.DARK -> true
-    }
+fun TaiwanWeatherTheme(dark: Boolean, content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = if (dark) MidnightSakuraColors else SakuraColors, content = content)
 }
