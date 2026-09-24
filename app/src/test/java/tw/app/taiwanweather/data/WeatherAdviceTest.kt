@@ -17,6 +17,17 @@ class WeatherAdviceTest {
     }
 
     @Test
+    fun `UV advice uses all official exposure boundaries`() {
+        assertEquals(UvLevel.LOW, uvProtectionAdvice("2")?.level)
+        assertEquals(UvLevel.MODERATE, uvProtectionAdvice("3")?.level)
+        assertEquals(UvLevel.HIGH, uvProtectionAdvice("6")?.level)
+        assertEquals(UvLevel.VERY_HIGH, uvProtectionAdvice("8")?.level)
+        assertEquals(UvLevel.EXTREME, uvProtectionAdvice("11")?.level)
+        assertNull(uvProtectionAdvice("--"))
+        assertNull(uvProtectionAdvice("-1"))
+    }
+
+    @Test
     fun `summary prioritizes high afternoon rain`() {
         val report = report(
             HourlyForecast("2026-09-23T09:00:00+08:00", temperature = "32", rainProbability = "10"),

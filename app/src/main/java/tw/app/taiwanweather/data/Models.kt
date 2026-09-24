@@ -36,7 +36,12 @@ data class CurrentWeather(
     val humidity: String = "--",
     val rainProbability: String = "--",
     val wind: String = "--",
-    val station: StationInfo? = null
+    val station: StationInfo? = null,
+    val dewPoint: String = "--",
+    val pressure: String = "--",
+    val precipitation: String = "--",
+    val gustSpeed: String = "--",
+    val beaufortScale: String = "--"
 )
 
 data class HourlyForecast(
@@ -47,7 +52,15 @@ data class HourlyForecast(
     val rainProbability: String = "--",
     val humidity: String = "--",
     val apparentTemperature: String = "--",
-    val wind: String = "--"
+    val wind: String = "--",
+    val uvIndex: String = "--",
+    val dewPoint: String = "--",
+    val comfort: String = "--",
+    val minTemperature: String = "--",
+    val maxTemperature: String = "--",
+    val minApparentTemperature: String = "--",
+    val maxApparentTemperature: String = "--",
+    val beaufortScale: String = "--"
 )
 
 data class WeatherAlert(
@@ -64,7 +77,11 @@ data class DailyForecast(
     val description: String,
     val minTemperature: String,
     val maxTemperature: String,
-    val rainProbability: String
+    val rainProbability: String,
+    val uvIndex: String = "--",
+    val minApparentTemperature: String = "--",
+    val maxApparentTemperature: String = "--",
+    val comfort: String = "--"
 )
 
 data class AirQuality(
@@ -73,7 +90,17 @@ data class AirQuality(
     val pm25: String,
     val siteName: String,
     val publishTime: String,
-    val station: StationInfo? = null
+    val station: StationInfo? = null,
+    val pm10: String = "--",
+    val o3: String = "--",
+    val co: String = "--",
+    val so2: String = "--",
+    val no2: String = "--",
+    val pollutant: String = "--",
+    val o3_8hr: String = "--",
+    val co_8hr: String = "--",
+    val pm10Average: String = "--",
+    val pm25Average: String = "--"
 )
 
 enum class WeatherSource { FORECAST, OBSERVATIONS, AIR, ALERTS }

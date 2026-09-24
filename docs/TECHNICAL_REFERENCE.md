@@ -25,6 +25,8 @@
 - `WeatherReport`：主畫面所需的完整聚合資料。
 - `LoadState`：Idle、Loading、Success、Error。
 - `SunTimes`：目前地點當日的日出與日落時間。
+- `HourlyForecast`：分時溫濕度、降雨、紫外線、露點、舒適度及風況。
+- `AirQuality`：AQI、懸浮微粒、氣體污染物、主要污染物與測站資料。
 
 ## CWA API
 
@@ -99,6 +101,8 @@ api_key=<使用者金鑰>&offset=0&limit=1000&format=json
 ## 主題與系統列
 
 `SunCalculator` 依日期與地點座標在本機計算日出日落。日出至日落使用淺色主題，其餘時間使用深色主題；無座標時暫時使用 `isSystemInDarkTheme()`。`MainActivity` 使用 `enableEdgeToEdge` 與 `SystemBarStyle` 同步狀態列及系統 Navigation Bar。
+
+`LifecycleEventEffect(ON_START)` 會通知 `AppViewModel` 檢查前景更新策略。最近成功資料超過 30 分鐘時強制更新；自動嘗試之間至少間隔 5 分鐘，手動更新不受此限制。
 
 ## R8 規則
 

@@ -39,6 +39,64 @@ class WeatherDataLayerTest {
     }
 
     @Test
+    fun `forecast interval values cover official forecast time with exact match preferred`() {
+        val location = json.parseToJsonElement("""{
+          "WeatherElement":[
+            {"ElementName":"天氣現象","Time":[
+              {"StartTime":"2026-09-23T12:00:00+08:00","ElementValue":[{"Weather":"晴"}]},
+              {"StartTime":"2026-09-23T15:00:00+08:00","ElementValue":[{"Weather":"多雲"}]}]},
+            {"ElementName":"紫外線指數","Time":[
+              {"StartTime":"2026-09-23T06:00:00+08:00","EndTime":"2026-09-23T18:00:00+08:00","ElementValue":[{"UVIndex":"7"}]},
+              {"StartTime":"2026-09-23T15:00:00+08:00","ElementValue":[{"UVIndex":"4"}]}]},
+            {"ElementName":"舒適度","Time":[
+              {"StartTime":"2026-09-23T12:00:00+08:00","EndTime":"2026-09-23T18:00:00+08:00","ElementValue":[{"ComfortIndexDescription":"舒適"}]}]}
+          ]
+        }""").jsonObject
+
+        val hourly = WeatherRepository(clock = clock).parseForecast(location).hourly
+
+        assertEquals(listOf("7", "4"), hourly.map { it.uvIndex })
+        assertEquals(listOf("舒適", "舒適"), hourly.map { it.comfort })
+    }
+
+    @Test
+    fun `observation parses nested rain gust and derives beaufort while hiding sentinels`() {
+        val root = json.parseToJsonElement("""{"records":{"Station":[{
+          "StationName":"測站","GeoInfo":{"CountyName":"臺北市","TownName":"中正區"},
+          "WeatherElement":{"AirTemperature":"28","DewPoint":"-99","AirPressure":"1008.2",
+            "WindSpeed":"12.0","Now":{"Precipitation":"3.5"},"GustInfo":{"PeakGustSpeed":"18.2"}}
+        }]}}""").jsonObject
+
+        val current = WeatherRepository(clock = clock).findObservation(root, Place("臺北市", "中正區"), null)!!
+
+        assertEquals("3.5", current.precipitation)
+        assertEquals("18.2", current.gustSpeed)
+        assertEquals("6", current.beaufortScale)
+        assertEquals("", current.dewPoint)
+    }
+
+    @Test
+    fun `air quality parses complete lowercase MOENV fields and aliases`() {
+        val root = json.parseToJsonElement("""{"records":[{"county":"臺北市","township":"中正區",
+          "aqi":"42","status":"良好","pm2.5":"11","pm10":"22","o3":"31","co":"0.3","so2":"2","no2":"9",
+          "pollutant":"臭氧","o3_8hr":"28","co_8hr":"0.2","pm10_avg":"20","pm2.5_avg":"10","sitename":"站","publishtime":"now"}]}""").jsonObject
+
+        val air = WeatherRepository(clock = clock).findAirQuality(root, Place("臺北市", "中正區"), null)!!
+
+        assertEquals(listOf("22", "31", "0.3", "2", "9"), listOf(air.pm10, air.o3, air.co, air.so2, air.no2))
+        assertEquals("臭氧", air.pollutant)
+        assertEquals(listOf("28", "0.2", "20", "10"), listOf(air.o3_8hr, air.co_8hr, air.pm10Average, air.pm25Average))
+    }
+
+    @Test
+    fun `beaufort conversion follows standard boundaries`() {
+        assertEquals(0, windSpeedToBeaufort(0.2))
+        assertEquals(1, windSpeedToBeaufort(0.3))
+        assertEquals(6, windSpeedToBeaufort(12.0))
+        assertEquals(12, windSpeedToBeaufort(32.7))
+    }
+
+    @Test
     fun `alerts filter unrelated and expired records defensively`() {
         val repository = WeatherRepository(clock = clock)
         val root = json.parseToJsonElement("""{"records":{"alerts":[

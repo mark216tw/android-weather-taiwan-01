@@ -107,6 +107,11 @@ class WeatherRepository(
                 humidity = it.humidity.ifBlank { parsed.current.humidity },
                 description = it.description.ifBlank { parsed.current.description },
                 wind = it.wind.ifBlank { parsed.current.wind },
+                dewPoint = it.dewPoint.ifBlank { parsed.current.dewPoint },
+                pressure = it.pressure.ifBlank { parsed.current.pressure },
+                precipitation = it.precipitation.ifBlank { parsed.current.precipitation },
+                gustSpeed = it.gustSpeed.ifBlank { parsed.current.gustSpeed },
+                beaufortScale = it.beaufortScale.ifBlank { parsed.current.beaufortScale },
                 station = it.station
             )
         } ?: parsed.current
@@ -195,71 +200,108 @@ class WeatherRepository(
 
     internal fun parseForecast(location: JsonObject): ParsedForecast {
         val elements = location.array("WeatherElement", "weatherElement").map { it.jsonObject }
-        val byName = elements.associateBy { it.text("ElementName", "elementName").orEmpty() }
-        fun values(name: String): Map<String, JsonObject> = byName[name]?.array("Time", "time").orEmpty()
-            .map { it.jsonObject }.mapNotNull { time -> time.timeKey()?.let { it to time } }.toMap()
+        fun times(vararg names: String): List<JsonObject> = elements.firstOrNull {
+            it.text("ElementName", "elementName") in names
+        }?.array("Time", "time").orEmpty().map { it.jsonObject }
+        fun at(series: List<JsonObject>, key: String): JsonObject? {
+            series.firstOrNull { it.timeKey() == key }?.let { return it }
+            val target = parseInstant(key) ?: return null
+            return series.firstOrNull { item ->
+                val start = item.text("StartTime", "startTime", "DataTime", "dataTime")?.let(::parseInstant)
+                val end = item.text("EndTime", "endTime")?.let(::parseInstant)
+                start != null && end != null && !target.isBefore(start) && target.isBefore(end)
+            }
+        }
         fun value(time: JsonObject?, vararg names: String): String? {
             val item = time?.array("ElementValue", "elementValue")?.firstOrNull() as? JsonObject ?: return null
-            return names.firstNotNullOfOrNull { item.text(it) } ?: item.values.firstNotNullOfOrNull { it.stringValue() }
+            return (names.firstNotNullOfOrNull { item.text(it) } ?: item.values.firstNotNullOfOrNull { it.stringValue() })
+                ?.takeUnless { it.isMissingValue() }
         }
-        val weather = values("天氣現象")
-        val temp = values("平均溫度")
-        val min = values("最低溫度")
-        val max = values("最高溫度")
-        val humidity = values("平均相對濕度")
-        val apparent = values("最高體感溫度")
-        val rain = values("12小時降雨機率")
-        val windSpeed = values("風速")
-        val windDirection = values("風向")
+        val weather = times("天氣現象", "天氣預報綜合描述")
+        val temp = times("平均溫度")
+        val min = times("最低溫度")
+        val max = times("最高溫度")
+        val humidity = times("平均相對濕度")
+        val minApparent = times("最低體感溫度")
+        val maxApparent = times("最高體感溫度")
+        val rain = times("12小時降雨機率", "降雨機率")
+        val windSpeed = times("風速")
+        val windDirection = times("風向")
+        val uv = times("紫外線指數", "UVI")
+        val dewPoint = times("平均露點溫度")
+        val comfort = times("舒適度指數", "舒適度")
+        val beaufort = times("蒲福風級")
         require(weather.isNotEmpty()) { "氣象署沒有提供此地點資料" }
         fun wind(key: String) = listOfNotNull(
-            value(windDirection[key], "WindDirection", "value"),
-            value(windSpeed[key], "WindSpeed", "value")?.let { "$it m/s" }
+            value(at(windDirection, key), "WindDirection", "value"),
+            value(at(windSpeed, key), "WindSpeed", "value")?.let { "$it m/s" }
         ).joinToString(" ").ifBlank { "--" }
-        val keys = weather.keys.sorted()
-        val first = keys.first()
+        val weatherByKey = weather.mapNotNull { item -> item.timeKey()?.let { it to item } }.toMap()
+        val keys = weatherByKey.keys.sorted()
+        val now = clock.instant()
+        val futureKeys = keys.filter { key -> parseInstant(key)?.let { !it.isBefore(now) } ?: true }
+        val first = futureKeys.firstOrNull() ?: keys.first()
         val current = CurrentWeather(
-            temperature = value(temp[first], "Temperature", "value") ?: "--",
-            apparentTemperature = value(apparent[first], "MaxApparentTemperature", "value") ?: "--",
-            description = value(weather[first], "Weather", "value") ?: "--",
-            humidity = value(humidity[first], "RelativeHumidity", "value") ?: "--",
-            rainProbability = value(rain[first], "ProbabilityOfPrecipitation", "value") ?: "--",
-            wind = wind(first)
+            temperature = value(at(temp, first), "Temperature", "value") ?: "--",
+            apparentTemperature = value(at(maxApparent, first), "MaxApparentTemperature", "value") ?: "--",
+            description = value(weatherByKey[first], "Weather", "WeatherDescription", "value") ?: "--",
+            humidity = value(at(humidity, first), "RelativeHumidity", "value") ?: "--",
+            rainProbability = value(at(rain, first), "ProbabilityOfPrecipitation", "value") ?: "--",
+            wind = wind(first),
+            dewPoint = value(at(dewPoint, first), "DewPoint", "DewPointTemperature", "value") ?: "--",
+            beaufortScale = value(at(beaufort, first), "BeaufortScale", "value") ?: "--"
         )
-        val firstInstant = parseInstant(first)
-        val hourlyKeys = keys.filter { key ->
+        val end = now.plusSeconds(48 * 60 * 60)
+        val hourlyKeys = futureKeys.filter { key ->
             val instant = parseInstant(key)
-            firstInstant == null || instant == null || !instant.isAfter(firstInstant.plusSeconds(48 * 60 * 60))
+            instant == null || !instant.isAfter(end)
         }
         val hourly = hourlyKeys.map { key ->
             HourlyForecast(
-                startTime = weather[key]?.text("StartTime", "startTime") ?: key,
-                dataTime = weather[key]?.text("DataTime", "dataTime"),
-                temperature = value(temp[key], "Temperature", "value") ?: "--",
-                description = value(weather[key], "Weather", "value") ?: "--",
-                rainProbability = value(rain[key], "ProbabilityOfPrecipitation", "value") ?: "--",
-                humidity = value(humidity[key], "RelativeHumidity", "value") ?: "--",
-                apparentTemperature = value(apparent[key], "MaxApparentTemperature", "value") ?: "--",
-                wind = wind(key)
+                startTime = weatherByKey[key]?.text("StartTime", "startTime") ?: key,
+                dataTime = weatherByKey[key]?.text("DataTime", "dataTime"),
+                temperature = value(at(temp, key), "Temperature", "value") ?: "--",
+                description = value(weatherByKey[key], "Weather", "WeatherDescription", "value") ?: "--",
+                rainProbability = value(at(rain, key), "ProbabilityOfPrecipitation", "value") ?: "--",
+                humidity = value(at(humidity, key), "RelativeHumidity", "value") ?: "--",
+                apparentTemperature = value(at(maxApparent, key), "MaxApparentTemperature", "value") ?: "--",
+                wind = wind(key),
+                uvIndex = value(at(uv, key), "UVIndex", "UVI", "value") ?: "--",
+                dewPoint = value(at(dewPoint, key), "DewPoint", "DewPointTemperature", "value") ?: "--",
+                comfort = value(at(comfort, key), "ComfortIndex", "ComfortIndexDescription", "Comfort", "value") ?: "--",
+                minTemperature = value(at(min, key), "MinTemperature", "value") ?: "--",
+                maxTemperature = value(at(max, key), "MaxTemperature", "value") ?: "--",
+                minApparentTemperature = value(at(minApparent, key), "MinApparentTemperature", "value") ?: "--",
+                maxApparentTemperature = value(at(maxApparent, key), "MaxApparentTemperature", "value") ?: "--",
+                beaufortScale = value(at(beaufort, key), "BeaufortScale", "value") ?: "--"
             )
         }
         val daily = keys.groupBy { it.take(10) }.entries.take(7).map { (date, dayKeys) ->
             DailyForecast(
                 date,
-                value(weather[dayKeys.first()], "Weather", "value") ?: "--",
-                dayKeys.mapNotNull { value(min[it], "MinTemperature", "value")?.toIntOrNull() }.minOrNull()?.toString() ?: "--",
-                dayKeys.mapNotNull { value(max[it], "MaxTemperature", "value")?.toIntOrNull() }.maxOrNull()?.toString() ?: "--",
-                dayKeys.mapNotNull { value(rain[it], "ProbabilityOfPrecipitation", "value")?.toIntOrNull() }.maxOrNull()?.toString() ?: "--"
+                value(weatherByKey[dayKeys.first()], "Weather", "WeatherDescription", "value") ?: "--",
+                dayKeys.mapNotNull { value(at(min, it), "MinTemperature", "value")?.toIntOrNull() }.minOrNull()?.toString() ?: "--",
+                dayKeys.mapNotNull { value(at(max, it), "MaxTemperature", "value")?.toIntOrNull() }.maxOrNull()?.toString() ?: "--",
+                dayKeys.mapNotNull { value(at(rain, it), "ProbabilityOfPrecipitation", "value")?.toIntOrNull() }.maxOrNull()?.toString() ?: "--",
+                uvIndex = dayKeys.mapNotNull { value(at(uv, it), "UVIndex", "UVI", "value")?.toDoubleOrNull() }.maxOrNull()?.formatNumber() ?: "--",
+                minApparentTemperature = dayKeys.mapNotNull { value(at(minApparent, it), "MinApparentTemperature", "value")?.toIntOrNull() }.minOrNull()?.toString() ?: "--",
+                maxApparentTemperature = dayKeys.mapNotNull { value(at(maxApparent, it), "MaxApparentTemperature", "value")?.toIntOrNull() }.maxOrNull()?.toString() ?: "--",
+                comfort = dayKeys.firstNotNullOfOrNull { value(at(comfort, it), "ComfortIndexDescription", "Comfort", "ComfortIndex", "value") } ?: "--"
             )
         }
         return ParsedForecast(current, daily, hourly)
     }
 
-    private fun findObservation(root: JsonObject, place: Place, target: GeoPoint?): CurrentWeather? {
+    internal fun findObservation(root: JsonObject, place: Place, target: GeoPoint?): CurrentWeather? {
         val stations = root.obj("records")?.array("Station", "station", "location").orEmpty().map { it.jsonObject }
         val candidates = stations.mapNotNull { station ->
-            val weather = station.obj("WeatherElement", "weatherElement") ?: return@mapNotNull null
-            val temperature = weather.text("AirTemperature", "airTemperature").validNumber() ?: return@mapNotNull null
+            val rawWeather = station["WeatherElement"] ?: station["weatherElement"] ?: return@mapNotNull null
+            val weather = when (rawWeather) {
+                is JsonObject -> rawWeather
+                is JsonArray -> JsonObject(rawWeather.filterIsInstance<JsonObject>().flatMap { it.entries }.associate { it.toPair() })
+                else -> return@mapNotNull null
+            }
+            val temperature = weather.deepText("AirTemperature", "airTemperature").validNumber() ?: return@mapNotNull null
             val geo = station.obj("GeoInfo", "geoInfo")
             val coordinate = station.coordinate() ?: geo?.coordinate()
             Observation(station, weather, geo, coordinate, temperature)
@@ -271,7 +313,14 @@ class WeatherRepository(
                 normalize(it.geo?.text("TownName", "townName")) == normalize(place.township)
         } ?: candidates.firstOrNull { normalize(it.geo?.text("CountyName", "countyName")) == normalize(place.county) }
         selected ?: return null
-        fun valid(vararg keys: String) = selected.weather.text(*keys).validNumber().orEmpty()
+        fun valid(vararg keys: String) = selected.weather.deepText(*keys).validNumber().orEmpty()
+        fun nestedValue(container: String, vararg keys: String) = selected.weather.descendantObjects()
+            .firstNotNullOfOrNull { obj -> obj.entries.firstOrNull { it.key.equals(container, true) }?.value as? JsonObject }
+            ?.deepText(*keys).validNumber().orEmpty()
+        val windSpeed = valid("WindSpeed", "windSpeed")
+        val gust = nestedValue("GustInfo", "PeakGustSpeed", "peakGustSpeed", "WindSpeed", "windSpeed")
+            .ifBlank { valid("PeakGustSpeed", "peakGustSpeed", "MaxGustSpeed", "maxGustSpeed") }
+        val apiBeaufort = selected.weather.deepText("BeaufortScale", "beaufortScale").validNumber()
         val distance = target?.let { selected.coordinate?.let { point -> GeoDistance.kilometers(it, point) } }
         val stationInfo = StationInfo(
             selected.station.text("StationName", "stationName", "locationName").orEmpty(),
@@ -281,14 +330,21 @@ class WeatherRepository(
         )
         return CurrentWeather(
             temperature = selected.temperature,
-            description = selected.weather.text("Weather", "weather").orEmpty().takeUnless { it == "-99" }.orEmpty(),
+            description = selected.weather.deepText("Weather", "weather").orEmpty().takeUnless { it.isMissingValue() }.orEmpty(),
             humidity = valid("RelativeHumidity", "relativeHumidity"),
-            wind = valid("WindSpeed", "windSpeed").let { if (it.isBlank()) "" else "$it m/s" },
+            wind = windSpeed.let { if (it.isBlank()) "" else "$it m/s" },
+            dewPoint = valid("DewPoint", "dewPoint", "DewPointTemperature", "dewPointTemperature"),
+            pressure = valid("AirPressure", "airPressure", "StationPressure", "stationPressure"),
+            precipitation = nestedValue("Now", "Precipitation", "precipitation").ifBlank {
+                valid("Precipitation", "precipitation", "Rainfall", "rainfall")
+            },
+            gustSpeed = gust,
+            beaufortScale = apiBeaufort ?: windSpeed.toDoubleOrNull()?.let(::windSpeedToBeaufort)?.toString().orEmpty(),
             station = stationInfo
         )
     }
 
-    private fun findAirQuality(root: JsonObject, place: Place, target: GeoPoint?): AirQuality? {
+    internal fun findAirQuality(root: JsonObject, place: Place, target: GeoPoint?): AirQuality? {
         val records = root.array("records").map { it.jsonObject }.filter { it.text("aqi")?.toDoubleOrNull() != null }
         val selected = if (target != null) records.mapNotNull { record -> record.coordinate()?.let { record to it } }
             .minByOrNull { GeoDistance.kilometers(target, it.second) }?.first
@@ -304,6 +360,16 @@ class WeatherRepository(
             selected.text("publishtime").orEmpty(),
             StationInfo(selected.text("sitename").orEmpty(), selected.text("publishtime").orEmpty(), point,
                 target?.let { point?.let { p -> GeoDistance.kilometers(it, p) } })
+            , pm10 = selected.cleanText("pm10"),
+            o3 = selected.cleanText("o3"),
+            co = selected.cleanText("co"),
+            so2 = selected.cleanText("so2"),
+            no2 = selected.cleanText("no2"),
+            pollutant = selected.cleanText("pollutant"),
+            o3_8hr = selected.cleanText("o3_8hr", "o3_8h"),
+            co_8hr = selected.cleanText("co_8hr", "co_8h"),
+            pm10Average = selected.cleanText("pm10_avg", "pm10_average"),
+            pm25Average = selected.cleanText("pm2.5_avg", "pm2_5_avg", "pm25_avg")
         )
     }
 
@@ -390,7 +456,27 @@ class WeatherRepository(
 
 private fun CachedPayload.json() = Json.parseToJsonElement(payload).jsonObject
 private fun String?.validNumber(): String? = this?.toDoubleOrNull()?.takeIf { it > -90 }?.let {
-    if (it % 1.0 == 0.0) it.toInt().toString() else "%.1f".format(it)
+    it.formatNumber()
+}
+private fun Double.formatNumber() = if (this % 1.0 == 0.0) toInt().toString() else "%.1f".format(this)
+private fun String.isMissingValue() = isBlank() || trim() in setOf("-99", "-99.0", "-999", "--", "NA", "N/A", "null")
+private fun JsonObject.cleanText(vararg keys: String) = text(*keys)?.takeUnless { it.isMissingValue() } ?: "--"
+
+internal fun windSpeedToBeaufort(metersPerSecond: Double): Int = when {
+    metersPerSecond < 0 -> 0
+    metersPerSecond < 0.3 -> 0
+    metersPerSecond < 1.6 -> 1
+    metersPerSecond < 3.4 -> 2
+    metersPerSecond < 5.5 -> 3
+    metersPerSecond < 8.0 -> 4
+    metersPerSecond < 10.8 -> 5
+    metersPerSecond < 13.9 -> 6
+    metersPerSecond < 17.2 -> 7
+    metersPerSecond < 20.8 -> 8
+    metersPerSecond < 24.5 -> 9
+    metersPerSecond < 28.5 -> 10
+    metersPerSecond < 32.7 -> 11
+    else -> 12
 }
 private fun JsonObject.timeKey() = text("StartTime", "startTime", "DataTime", "dataTime")
 private fun JsonObject.coordinate(): GeoPoint? {

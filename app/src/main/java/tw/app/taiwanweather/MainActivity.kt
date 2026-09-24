@@ -13,6 +13,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.Lifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
@@ -49,6 +51,9 @@ private fun LocationAwareApp(viewModel: AppViewModel) {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
         if (result.values.any { it }) viewModel.locate()
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_START) {
+        viewModel.onForeground()
     }
     TaiwanWeatherApp(
         viewModel = viewModel,

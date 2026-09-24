@@ -16,6 +16,26 @@ data class AqiHealthAdvice(
     val maskAdvice: String
 )
 
+enum class UvLevel { LOW, MODERATE, HIGH, VERY_HIGH, EXTREME }
+
+data class UvProtectionAdvice(
+    val level: UvLevel,
+    val label: String,
+    val advice: String
+)
+
+fun uvProtectionAdvice(uvIndex: String): UvProtectionAdvice? {
+    val value = uvIndex.toDoubleOrNull() ?: return null
+    return when {
+        value < 0 -> null
+        value < 3 -> UvProtectionAdvice(UvLevel.LOW, "低量級", "一般情況不需特別防曬，仍可視需要使用防曬用品。")
+        value < 6 -> UvProtectionAdvice(UvLevel.MODERATE, "中量級", "外出請做好防曬，建議使用防曬乳、帽子或陽傘。")
+        value < 8 -> UvProtectionAdvice(UvLevel.HIGH, "高量級", "請加強防曬並減少正午時段曝曬。")
+        value < 11 -> UvProtectionAdvice(UvLevel.VERY_HIGH, "過量級", "請避免長時間曝曬，外出務必完整防曬。")
+        else -> UvProtectionAdvice(UvLevel.EXTREME, "危險級", "紫外線危險，請避免外出曝曬並採取完整防護。")
+    }
+}
+
 fun aqiHealthAdvice(aqi: String): AqiHealthAdvice? = when (aqi.toIntOrNull()) {
     in 0..50 -> AqiHealthAdvice(
         AqiLevel.GOOD,

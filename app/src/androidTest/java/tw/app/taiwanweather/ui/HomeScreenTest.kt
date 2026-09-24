@@ -1,12 +1,16 @@
 package tw.app.taiwanweather.ui
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.performClick
 import org.junit.Rule
 import org.junit.Test
 import tw.app.taiwanweather.AppUiState
 import tw.app.taiwanweather.data.CacheState
+import tw.app.taiwanweather.data.AirQuality
 import tw.app.taiwanweather.data.CurrentWeather
 import tw.app.taiwanweather.data.HourlyForecast
 import tw.app.taiwanweather.data.LoadState
@@ -24,11 +28,18 @@ class HomeScreenTest {
     fun cachedReportShowsFreshnessHourlyAndAlerts() {
         val report = WeatherReport(
             place = Place("臺北市", "中正區"),
-            current = CurrentWeather(temperature = "28", description = "晴"),
+            current = CurrentWeather(temperature = "28", description = "晴", dewPoint = "22", pressure = "1008"),
             forecast = emptyList(),
-            airQuality = null,
+            airQuality = AirQuality(
+                aqi = "75", status = "普通", pm25 = "18", siteName = "中山", publishTime = "12:00",
+                pm10 = "35", o3 = "28", pollutant = "細懸浮微粒"
+            ),
             updatedAt = "09/23 12:00",
-            hourly = listOf(HourlyForecast("2026-09-23T15:00:00+08:00", temperature = "27", description = "晴")),
+            hourly = listOf(
+                HourlyForecast("2026-09-23T12:00:00+08:00", temperature = "28", description = "晴", rainProbability = "10", humidity = "70", uvIndex = "6"),
+                HourlyForecast("2026-09-23T15:00:00+08:00", temperature = "27", description = "晴", rainProbability = "20", humidity = "75", uvIndex = "4"),
+                HourlyForecast("2026-09-23T18:00:00+08:00", temperature = "25", description = "多雲", rainProbability = "30", humidity = "80", uvIndex = "1")
+            ),
             alerts = listOf(WeatherAlert("alert", "豪雨特報")),
             cache = CacheState(fromCache = true, stale = true)
         )
@@ -52,8 +63,13 @@ class HomeScreenTest {
 
         compose.onNodeWithText("目前顯示已儲存資料，內容可能已過期").assertIsDisplayed()
         compose.onNodeWithText("豪雨特報").assertIsDisplayed()
-        compose.onNodeWithText("未來 48 小時分時預報").assertIsDisplayed()
+        compose.onAllNodesWithText("未來 48 小時分時預報").assertCountEquals(0)
         compose.onNodeWithText("日出").assertIsDisplayed()
         compose.onNodeWithText("日落").assertIsDisplayed()
+        compose.onNodeWithText("今日生活氣象").assertIsDisplayed()
+        compose.onNodeWithText("紫外線 6 · 高量級").assertIsDisplayed()
+        compose.onAllNodesWithText("未來 24 小時趨勢").assertCountEquals(0)
+        compose.onNodeWithText("查看污染物詳細資料").performClick()
+        compose.onNodeWithText("PM10").assertIsDisplayed()
     }
 }

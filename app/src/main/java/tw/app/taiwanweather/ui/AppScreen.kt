@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -96,7 +95,6 @@ import tw.app.taiwanweather.data.SunTimes
 import tw.app.taiwanweather.data.TaiwanCounties
 import tw.app.taiwanweather.data.WeatherReport
 import tw.app.taiwanweather.data.aqiHealthAdvice
-import tw.app.taiwanweather.data.formatHourlyTime
 import tw.app.taiwanweather.data.todayWeatherSummary
 import android.content.Intent
 import android.net.Uri
@@ -188,16 +186,16 @@ internal fun HomeScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.Top) {
                 Column(Modifier.weight(1f)) {
                     Text("台灣天氣", fontSize = 28.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
                     Text("今天也要帶著好心情出門 ♡", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                IconButton(onClick = refresh, enabled = !state.isRefreshing, modifier = Modifier.offset(y = (-4).dp)) {
+                IconButton(onClick = refresh, enabled = !state.isRefreshing, modifier = Modifier.offset(y = (-8).dp)) {
                     if (state.isRefreshing) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                     else Icon(Icons.Default.Refresh, "重新整理")
                 }
-                IconButton(openSettings, modifier = Modifier.offset(y = (-4).dp)) { Icon(Icons.Default.Settings, "設定") }
+                IconButton(openSettings, modifier = Modifier.offset(y = (-8).dp)) { Icon(Icons.Default.Settings, "設定") }
             }
         }
         item {
@@ -262,6 +260,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.reportItems(
         }
     }
     item { CurrentWeatherCard(report, sunTimes) }
+    item { WeatherDetailsSection(report) }
     if (missingMoenvKey) item {
         CuteCard {
             Text("尚未設定環境部 API Key", fontWeight = FontWeight.Bold)
@@ -299,23 +298,21 @@ private fun androidx.compose.foundation.lazy.LazyListScope.reportItems(
                     Text("敏感族群：${it.sensitiveAdvice}", Modifier.padding(top = 6.dp), fontSize = 13.sp, color = content)
                     Text(it.maskAdvice, Modifier.padding(top = 4.dp), fontSize = 13.sp, color = content)
                 }
-                }
-            }
-        }
-    }
-    if (report.hourly.isNotEmpty()) {
-        item { Text("未來 48 小時分時預報", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp)) }
-        item {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(report.hourly) { hour ->
-                    Card(shape = RoundedCornerShape(20.dp)) {
-                        Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(formatHourlyTime(hour.startTime), fontWeight = FontWeight.Bold)
-                            Text(weatherSymbol(hour.description), fontSize = 30.sp)
-                            Text("${hour.temperature}°", fontWeight = FontWeight.Bold)
-                            Text("降雨 ${hour.rainProbability}%", fontSize = 12.sp)
-                        }
-                    }
+                AirPollutantDetails(
+                    values = listOf(
+                        "主要污染物" to air.pollutant,
+                        "PM10" to "${air.pm10} μg/m³",
+                        "PM2.5 平均" to "${air.pm25Average} μg/m³",
+                        "PM10 平均" to "${air.pm10Average} μg/m³",
+                        "臭氧 O₃" to "${air.o3} ppb",
+                        "臭氧 8 小時" to "${air.o3_8hr} ppb",
+                        "一氧化碳 CO" to "${air.co} ppm",
+                        "CO 8 小時" to "${air.co_8hr} ppm",
+                        "二氧化硫 SO₂" to "${air.so2} ppb",
+                        "二氧化氮 NO₂" to "${air.no2} ppb"
+                    ),
+                    contentColor = content
+                )
                 }
             }
         }
@@ -327,11 +324,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.reportItems(
         }
     }
     item { Text("未來幾天", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp)) }
-    item {
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(report.forecast) { ForecastCard(it) }
-        }
-    }
+    items(report.forecast) { ForecastCard(it) }
     item {
         Column {
             Text("更新於 ${report.updatedAt}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -399,14 +392,27 @@ private fun AqiLevel.aqiColor() = when (this) {
 
 @Composable
 private fun ForecastCard(day: DailyForecast) {
-    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .92f))) {
-        Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(day.date.drop(5).replace('-', '/'), fontWeight = FontWeight.Bold)
-            Text(weatherSymbol(day.description), fontSize = 34.sp)
-            Text(day.description, maxLines = 1, fontSize = 13.sp)
-            Text("${day.minTemperature}° / ${day.maxTemperature}°", fontWeight = FontWeight.Bold)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Umbrella, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.secondary); Text(" ${day.rainProbability}%", fontSize = 12.sp)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .92f))
+    ) {
+        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(.22f), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(day.date.drop(5).replace('-', '/'), fontWeight = FontWeight.Bold)
+                Text(weatherSymbol(day.description), fontSize = 34.sp)
+            }
+            Column(Modifier.weight(.48f).padding(horizontal = 12.dp)) {
+                Text(day.description, fontWeight = FontWeight.Bold)
+                if (day.comfort != "--") Text(day.comfort, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (day.uvIndex != "--") Text("紫外線 ${day.uvIndex}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Column(Modifier.weight(.3f), horizontalAlignment = Alignment.End) {
+                Text("${day.minTemperature}° / ${day.maxTemperature}°", fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Umbrella, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.secondary)
+                    Text(" ${day.rainProbability}%", fontSize = 12.sp)
+                }
             }
         }
     }

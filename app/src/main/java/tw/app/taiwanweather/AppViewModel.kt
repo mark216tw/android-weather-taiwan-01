@@ -12,6 +12,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import tw.app.taiwanweather.data.LoadState
 import tw.app.taiwanweather.data.GeoPoint
+import tw.app.taiwanweather.data.ForegroundRefreshPolicy
 import tw.app.taiwanweather.data.Place
 import tw.app.taiwanweather.data.SecureStore
 import tw.app.taiwanweather.data.SunCalculator
@@ -57,6 +58,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var refreshJob: Job? = null
     private var sunJob: Job? = null
     private var selectedCoordinate: GeoPoint? = null
+    private var hasEnteredForeground = false
+    private var lastForegroundRefreshAttempt: Long? = null
 
     init {
         viewModelScope.launch {
@@ -108,6 +111,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         }
+    }
+
+    fun onForeground() {
+        if (!hasEnteredForeground) {
+            hasEnteredForeground = true
+            return
+        }
+        val state = _ui.value
+        if (state.cwaKey.isBlank()) return
+        val now = System.currentTimeMillis()
+        val lastUpdated = (state.loadState as? LoadState.Success)?.report?.updatedEpochMillis
+        if (!ForegroundRefreshPolicy.shouldRefresh(lastUpdated, lastForegroundRefreshAttempt, now, state.isRefreshing)) return
+        lastForegroundRefreshAttempt = now
+        refresh(forceRefresh = true)
     }
 
     fun loadTownships(county: String) = viewModelScope.launch {

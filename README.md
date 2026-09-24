@@ -8,12 +8,15 @@
 - 依目前地點顯示當日日出、日落時間。
 - 顯示未來七日天氣預報。
 - 顯示環境部 AQI、PM2.5、空品狀態及測站資訊。
+- 顯示 PM10、O₃、CO、SO₂、NO₂、主要污染物及健康建議。
+- 顯示紫外線、防曬、露點、舒適度、氣壓、雨量、陣風與風級。
 - 使用 GPS 辨識台灣縣市與鄉鎮，台灣以外地點不提供查詢。
 - 以可搜尋的全頁清單選擇縣市及鄉鎮市區。
 - 收藏常用地點、切換地點、刪除收藏及調整順序。
 - CWA 與 MOENV 授權碼獨立連線測試。
 - 使用 Android Keystore 與 AES-GCM 加密授權碼。
 - 日出後自動使用淺色模式，日落後自動使用深色模式。
+- 回到前景時，若資料已超過 30 分鐘會自動更新。
 - 粉彩、活潑、友善的 Jetpack Compose 介面。
 
 ## 畫面流程
@@ -76,7 +79,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 app/build/outputs/apk/prerelease/app-prerelease.apk
 ```
 
-版本名稱：`1.2.0-prerelease`
+版本名稱：`1.3.0-prerelease`
 
 ## 權限
 
