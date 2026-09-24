@@ -4,6 +4,7 @@
 
 | 文件 | 內容 |
 | --- | --- |
+| [APP 知識庫](APP_KNOWLEDGE_BASE.md) | 目前功能、資料規則、架構、維護與發布知識總覽 |
 | [使用指南](USER_GUIDE.md) | API Key、定位、地點、收藏與常見問題 |
 | [系統架構](ARCHITECTURE.md) | 元件責任、目錄結構、資料流與錯誤隔離 |
 | [技術文件](TECHNICAL_REFERENCE.md) | 技術棧、API、資料模型、安全與 R8 |
