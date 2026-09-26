@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Umbrella
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.CheckCircle
@@ -50,6 +52,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -64,11 +67,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.activity.compose.BackHandler
 import androidx.compose.ui.Alignment
@@ -76,19 +81,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
 import tw.app.taiwanweather.AppUiState
 import tw.app.taiwanweather.AppViewModel
 import tw.app.taiwanweather.ApiTestState
 import tw.app.taiwanweather.data.DailyForecast
 import tw.app.taiwanweather.data.AqiLevel
+import tw.app.taiwanweather.data.AirQuality
 import tw.app.taiwanweather.data.LoadState
 import tw.app.taiwanweather.data.Place
 import tw.app.taiwanweather.data.SunTimes
@@ -98,7 +107,7 @@ import tw.app.taiwanweather.data.aqiHealthAdvice
 import tw.app.taiwanweather.data.beaufortName
 import tw.app.taiwanweather.data.comfortDescription
 import tw.app.taiwanweather.data.todayWeatherSummary
-import tw.app.taiwanweather.data.uvProtectionAdvice
+
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.ui.platform.LocalContext
@@ -107,6 +116,10 @@ import androidx.compose.ui.platform.LocalContext
 fun TaiwanWeatherApp(viewModel: AppViewModel, requestLocation: () -> Unit) {
     val state by viewModel.ui.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var sharing by remember { mutableStateOf(false) }
+    val darkTheme = MaterialTheme.colorScheme.background.luminance() < .5f
     var screen by remember { mutableStateOf(AppScreen.Home) }
     var draftCounty by remember { mutableStateOf(state.selected.county) }
     var draftTownship by remember { mutableStateOf(state.selected.township) }
@@ -141,7 +154,27 @@ fun TaiwanWeatherApp(viewModel: AppViewModel, requestLocation: () -> Unit) {
                     refresh = viewModel::refresh,
                     locate = requestLocation,
                     chooseLocation = { draftCounty = state.selected.county; draftTownship = state.selected.township; screen = AppScreen.Locations },
-                    openSettings = { screen = AppScreen.Settings }
+                    openSettings = { screen = AppScreen.Settings },
+                    share = {
+                        val report = (state.loadState as? LoadState.Success)?.report ?: return@HomeScreen
+                        scope.launch {
+                            sharing = true
+                            try {
+                                shareWeatherPage(
+                                    context,
+                                    report,
+                                    state.sunTimes,
+                                    state.isDarkBySun == true,
+                                    darkTheme
+                                )
+                            } catch (error: Throwable) {
+                                snackbar.showSnackbar("無法分享天氣頁面：${error.message ?: "未知錯誤"}")
+                            } finally {
+                                sharing = false
+                            }
+                        }
+                    },
+                    isSharing = sharing
                 )
                 AppScreen.Locations -> LocationAndFavoritesScreen(
                     state,
@@ -181,7 +214,9 @@ internal fun HomeScreen(
     refresh: () -> Unit,
     locate: () -> Unit,
     chooseLocation: () -> Unit,
-    openSettings: () -> Unit
+    openSettings: () -> Unit,
+    share: () -> Unit = {},
+    isSharing: Boolean = false
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -189,16 +224,32 @@ internal fun HomeScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            Row(verticalAlignment = Alignment.Top) {
-                Column(Modifier.weight(1f)) {
+            Column {
+                Row(verticalAlignment = Alignment.Top) {
                     Text("台灣天氣", fontSize = 28.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
-                    Text("今天也要帶著好心情出門 ♡", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.weight(1f))
+                    IconButton(onClick = refresh, enabled = !state.isRefreshing, modifier = Modifier.offset(y = (-8).dp)) {
+                        if (state.isRefreshing) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Default.Refresh, "重新整理")
+                    }
+                    IconButton(
+                        onClick = share,
+                        enabled = state.loadState is LoadState.Success && !isSharing,
+                        modifier = Modifier.offset(y = (-8).dp)
+                    ) {
+                        if (isSharing) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Default.Share, "分享完整天氣頁面")
+                    }
+                    IconButton(openSettings, modifier = Modifier.offset(y = (-8).dp)) { Icon(Icons.Default.Settings, "設定") }
                 }
-                IconButton(onClick = refresh, enabled = !state.isRefreshing, modifier = Modifier.offset(y = (-8).dp)) {
-                    if (state.isRefreshing) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Default.Refresh, "重新整理")
-                }
-                IconButton(openSettings, modifier = Modifier.offset(y = (-8).dp)) { Icon(Icons.Default.Settings, "設定") }
+                Text(
+                    "今天也要帶著好心情出門喔 ♡",
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
         item {
@@ -218,7 +269,15 @@ internal fun HomeScreen(
                 Spacer(Modifier.height(8.dp))
                 Button(onClick = refresh, modifier = Modifier.fillMaxWidth()) { Text("再試一次") }
             }
-            is LoadState.Success -> reportItems(load.report, state.sunTimes, state.refreshError, state.moenvKey.isBlank(), refresh, openSettings)
+            is LoadState.Success -> reportItems(
+                load.report,
+                state.sunTimes,
+                state.isDarkBySun == true,
+                state.refreshError,
+                state.moenvKey.isBlank(),
+                refresh,
+                openSettings
+            )
         }
     }
 }
@@ -226,6 +285,7 @@ internal fun HomeScreen(
 private fun androidx.compose.foundation.lazy.LazyListScope.reportItems(
     report: WeatherReport,
     sunTimes: SunTimes?,
+    isNight: Boolean,
     refreshError: String?,
     missingMoenvKey: Boolean,
     refresh: () -> Unit,
@@ -262,7 +322,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.reportItems(
             }
         }
     }
-    item { CurrentWeatherCard(report, sunTimes) }
+    item { CurrentWeatherCard(report, sunTimes, isNight) }
     item { WeatherDetailsSection(report, sunTimes) }
     if (missingMoenvKey) item {
         CuteCard {
@@ -272,53 +332,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.reportItems(
         }
     }
     report.airQuality?.let { air ->
-        item {
-            val advice = aqiHealthAdvice(air.aqi)
-            val container = advice?.level?.aqiColor() ?: MaterialTheme.colorScheme.surface
-            val content = when (advice?.level) {
-                AqiLevel.GOOD, AqiLevel.MODERATE, AqiLevel.SENSITIVE, AqiLevel.UNHEALTHY -> Color.Black
-                else -> Color.White
-            }
-            Card(
-                shape = RoundedCornerShape(28.dp),
-                colors = CardDefaults.cardColors(containerColor = container)
-            ) {
-                Column(Modifier.padding(18.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(54.dp).clip(CircleShape).background(content.copy(alpha = .15f)), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.Air, null, tint = content)
-                    }
-                    Column(Modifier.padding(start = 14.dp).weight(1f)) {
-                        Text("空氣品質 ${advice?.label ?: air.status}", fontWeight = FontWeight.Bold, color = content)
-                        Text("AQI ${air.aqi}　PM2.5 ${air.pm25}", color = content)
-                        val distance = air.station?.distanceKm?.let { " · %.1f 公里".format(it) }.orEmpty()
-                        Text("${air.siteName}測站 · ${air.publishTime}$distance", fontSize = 12.sp, color = content.copy(alpha = .8f))
-                    }
-                }
-                advice?.let {
-                    HorizontalDivider(Modifier.padding(vertical = 12.dp), color = content.copy(alpha = .25f))
-                    Text(it.generalAdvice, fontWeight = FontWeight.Bold, color = content)
-                    Text("敏感族群：${it.sensitiveAdvice}", Modifier.padding(top = 6.dp), fontSize = 13.sp, color = content)
-                    Text(it.maskAdvice, Modifier.padding(top = 4.dp), fontSize = 13.sp, color = content)
-                }
-                AirPollutantDetails(
-                    values = listOf(
-                        "主要污染物" to air.pollutant,
-                        "PM10" to "${air.pm10} μg/m³",
-                        "PM2.5 平均" to "${air.pm25Average} μg/m³",
-                        "PM10 平均" to "${air.pm10Average} μg/m³",
-                        "臭氧 O₃" to "${air.o3} ppb",
-                        "臭氧 8 小時" to "${air.o3_8hr} ppb",
-                        "一氧化碳 CO" to "${air.co} ppm",
-                        "CO 8 小時" to "${air.co_8hr} ppm",
-                        "二氧化硫 SO₂" to "${air.so2} ppb",
-                        "二氧化氮 NO₂" to "${air.no2} ppb"
-                    ),
-                    contentColor = content
-                )
-                }
-            }
-        }
+        item { AirQualityCard(air) }
     }
     if (report.issues.isNotEmpty()) item {
         CuteCard {
@@ -337,55 +351,117 @@ private fun androidx.compose.foundation.lazy.LazyListScope.reportItems(
 }
 
 @Composable
-private fun CurrentWeatherCard(report: WeatherReport, sunTimes: SunTimes?) {
+internal fun ShareHomePage(report: WeatherReport, sunTimes: SunTimes?, isNight: Boolean) {
+    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            MaterialTheme.colorScheme.background,
+                            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = .34f),
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = .24f)
+                        )
+                    )
+                )
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text("台灣天氣", fontSize = 28.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+            Text(report.place.title, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            if (report.cache.fromCache) {
+                CuteCard {
+                    Text(
+                        if (report.cache.stale) "目前顯示已儲存資料，內容可能已過期" else "目前顯示已儲存資料",
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                }
+            }
+            if (report.alerts.isNotEmpty()) {
+                Text("氣象警特報", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                report.alerts.forEach { alert ->
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                        Column(Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.onErrorContainer)
+                                Text(" ${alert.title}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onErrorContainer)
+                            }
+                            if (alert.description.isNotBlank()) {
+                                Text(alert.description, Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onErrorContainer)
+                            }
+                            val period = listOf(alert.issuedAt, alert.expiresAt).filter(String::isNotBlank).joinToString(" - ")
+                            if (period.isNotBlank()) Text(period, fontSize = 12.sp, color = MaterialTheme.colorScheme.onErrorContainer)
+                        }
+                    }
+                }
+            }
+            CurrentWeatherCard(report, sunTimes, isNight)
+            WeatherDetailsSection(report, sunTimes, forceExpanded = true)
+            report.airQuality?.let { AirQualityCard(it, forceExpanded = true) }
+            if (report.issues.isNotEmpty()) {
+                CuteCard {
+                    Text("部分資料無法更新", fontWeight = FontWeight.Bold)
+                    report.issues.forEach {
+                        Text("${it.source.name}: ${it.message}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            Text("未來幾天", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
+            report.forecast.forEach { ForecastCard(it) }
+            Text("更新於 ${report.updatedAt}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("資料來源：中央氣象署、環境部", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun CurrentWeatherCard(report: WeatherReport, sunTimes: SunTimes?, isNight: Boolean) {
     val current = report.current
     val comfort = comfortDescription(current.comfort, current.temperature)
     val beaufort = beaufortName(current.beaufortScale)
-    val uvAdvice = uvProtectionAdvice(current.uvIndex)
     Card(
         shape = RoundedCornerShape(32.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
         elevation = CardDefaults.cardElevation(5.dp)
     ) {
-        Column(Modifier.padding(24.dp)) {
+        Column(Modifier.padding(horizontal = 20.dp, vertical = 24.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                Text(weatherSymbol(current.description), fontSize = 66.sp, modifier = Modifier.padding(end = 24.dp))
-                Column(horizontalAlignment = Alignment.Start) {
-                    Text("${current.temperature}°", fontSize = 58.sp, fontWeight = FontWeight.Black)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(current.description, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                        comfort?.let { Text("　$it", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .75f)) }
-                    }
-                    Text("體感 ${current.apparentTemperature}°", color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .75f))
+                Text(weatherSymbol(current.description, isNight), fontSize = 66.sp, modifier = Modifier.padding(end = 12.dp))
+                Text("${current.temperature}°", fontSize = 68.sp, fontWeight = FontWeight.Black)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(start = 12.dp).widthIn(min = 88.dp)
+                ) {
+                    Metric("濕度", "${current.humidity}%", singleLine = true)
+                    Metric("體感", "${current.apparentTemperature}°", singleLine = true)
                 }
             }
-            HorizontalDivider(Modifier.padding(vertical = 16.dp), color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .14f))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Metric("濕度", "${current.humidity}%", Modifier.weight(1f))
-                Metric("降雨機率", "${current.rainProbability}%", Modifier.weight(1f))
-                val beaufortText = if (missingWeatherValue(current.beaufortScale)) "--"
-                    else if (beaufort == null) "${current.beaufortScale} 級" else "${current.beaufortScale} 級 · $beaufort"
-                Metric("蒲福風級", beaufortText, Modifier.weight(1f))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                Text(current.description, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                comfort?.let {
+                    Text("　$it", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .75f))
+                }
             }
+            HorizontalDivider(Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .14f))
             val rainfall = current.precipitation.takeUnless(::missingWeatherValue)
-            val daylightParts = listOfNotNull(
-                current.uvIndex.takeUnless(::missingWeatherValue)?.let { "UV $it${uvAdvice?.let { advice -> " · ${advice.label}" }.orEmpty()}" }
-            )
-            if (rainfall != null || sunTimes != null) {
-                HorizontalDivider(Modifier.padding(vertical = 14.dp), color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .14f))
-                Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    rainfall?.let { Metric("今日累積雨量", "$it mm") }
-                    sunTimes?.let { Metric("今日白晝", "${it.daylightText()} · ${it.daylightTrend.orEmpty()}") }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                Metric("降雨機率", "${current.rainProbability}%", Modifier.weight(1f))
+                rainfall?.let { Metric("今日累積雨量", "$it mm", Modifier.weight(1f)) }
+            }
+            if (sunTimes != null) {
+                HorizontalDivider(Modifier.padding(vertical = 10.dp), color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .14f))
+                Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    val beaufortText = if (missingWeatherValue(current.beaufortScale)) "--"
+                        else if (beaufort == null) "${current.beaufortScale} 級" else "${current.beaufortScale} 級 · $beaufort"
+                    Metric("蒲福風級", beaufortText)
+                    Metric("今日白晝", "${sunTimes.daylightText()} · ${sunTimes.daylightTrend.orEmpty()}")
                 }
             }
-            if (daylightParts.isNotEmpty()) {
-                Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.Center) {
-                    daylightParts.forEach { part -> Metric("紫外線", part.removePrefix("UV ")) }
-                }
-            }
+            HorizontalDivider(Modifier.padding(vertical = 10.dp), color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .14f))
             Text(
                 todayWeatherSummary(report),
-                modifier = Modifier.padding(top = 16.dp),
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
@@ -398,19 +474,84 @@ private fun CurrentWeatherCard(report: WeatherReport, sunTimes: SunTimes?) {
     }
 }
 
-private fun missingWeatherValue(value: String) = value.isBlank() || value == "--"
-
-private fun AqiLevel.aqiColor() = when (this) {
-    AqiLevel.GOOD -> Color(0xFF00E800)
-    AqiLevel.MODERATE -> Color(0xFFFFFF00)
-    AqiLevel.SENSITIVE -> Color(0xFFFF7E00)
-    AqiLevel.UNHEALTHY -> Color(0xFFFF0000)
-    AqiLevel.VERY_UNHEALTHY -> Color(0xFF8F3F97)
-    AqiLevel.HAZARDOUS -> Color(0xFF7E0023)
+@Composable
+private fun AirQualityCard(air: AirQuality, forceExpanded: Boolean = false) {
+    val advice = aqiHealthAdvice(air.aqi)
+    val dark = MaterialTheme.colorScheme.background.luminance() < .5f
+    val container = advice?.level?.aqiColor(dark) ?: MaterialTheme.colorScheme.surface
+    val content = if (container.luminance() > .179f) Color.Black else Color.White
+    Card(
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = container)
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(54.dp).clip(CircleShape).background(content.copy(alpha = .15f)), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.Air, null, tint = content)
+                }
+                Column(Modifier.padding(start = 14.dp).weight(1f)) {
+                    Text("空氣品質 ${advice?.label ?: air.status}", fontWeight = FontWeight.Bold, color = content)
+                    Text("AQI ${air.aqi}　PM2.5 ${air.pm25}", color = content)
+                    val distance = air.station?.distanceKm?.let { " · %.1f 公里".format(it) }.orEmpty()
+                    Text("${air.siteName}測站 · ${air.publishTime}$distance", fontSize = 12.sp, color = content.copy(alpha = .8f))
+                }
+            }
+            advice?.let {
+                HorizontalDivider(Modifier.padding(vertical = 12.dp), color = content.copy(alpha = .25f))
+                Text(it.generalAdvice, fontWeight = FontWeight.Bold, color = content)
+                Text("敏感族群：${it.sensitiveAdvice}", Modifier.padding(top = 6.dp), fontSize = 13.sp, color = content)
+                Text(it.maskAdvice, Modifier.padding(top = 4.dp), fontSize = 13.sp, color = content)
+            }
+            AirPollutantDetails(
+                values = listOf(
+                    "主要污染物" to air.pollutant,
+                    "PM10" to "${air.pm10} μg/m³",
+                    "PM2.5 平均" to "${air.pm25Average} μg/m³",
+                    "PM10 平均" to "${air.pm10Average} μg/m³",
+                    "臭氧 O₃" to "${air.o3} ppb",
+                    "臭氧 8 小時" to "${air.o3_8hr} ppb",
+                    "一氧化碳 CO" to "${air.co} ppm",
+                    "CO 8 小時" to "${air.co_8hr} ppm",
+                    "二氧化硫 SO₂" to "${air.so2} ppb",
+                    "二氧化氮 NO₂" to "${air.no2} ppb"
+                ),
+                contentColor = content,
+                forceExpanded = forceExpanded
+            )
+        }
+    }
 }
 
-@Composable private fun Metric(label: String, value: String, modifier: Modifier = Modifier) = Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-    Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(value, fontWeight = FontWeight.Bold)
+private fun missingWeatherValue(value: String) = value.isBlank() || value == "--"
+
+internal fun AqiLevel.aqiColor(dark: Boolean) = if (dark) {
+    when (this) {
+        AqiLevel.GOOD -> Color(0xFF245C3D)
+        AqiLevel.MODERATE -> Color(0xFF665D20)
+        AqiLevel.SENSITIVE -> Color(0xFF714A1E)
+        AqiLevel.UNHEALTHY -> Color(0xFF702D2D)
+        AqiLevel.VERY_UNHEALTHY -> Color(0xFF593259)
+        AqiLevel.HAZARDOUS -> Color(0xFF4D2830)
+    }
+} else {
+    when (this) {
+        AqiLevel.GOOD -> Color(0xFF00E800)
+        AqiLevel.MODERATE -> Color(0xFFFFFF00)
+        AqiLevel.SENSITIVE -> Color(0xFFFF7E00)
+        AqiLevel.UNHEALTHY -> Color(0xFFFF0000)
+        AqiLevel.VERY_UNHEALTHY -> Color(0xFF8F3F97)
+        AqiLevel.HAZARDOUS -> Color(0xFF7E0023)
+    }
+}
+
+@Composable private fun Metric(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    singleLine: Boolean = false
+) = Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+    Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(value, fontWeight = FontWeight.Bold, maxLines = if (singleLine) 1 else Int.MAX_VALUE, softWrap = !singleLine)
 }
 
 @Composable
@@ -418,7 +559,10 @@ private fun ForecastCard(day: DailyForecast) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .92f))
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .92f),
+            contentColor = MaterialTheme.colorScheme.onSurface
+        )
     ) {
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(.22f), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -614,7 +758,10 @@ private fun CuteCard(onClick: (() -> Unit)? = null, content: @Composable android
         enabled = onClick != null,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .94f))
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .94f),
+            contentColor = MaterialTheme.colorScheme.onSurface
+        )
     ) { Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically, content = content) }
 }
 
@@ -647,10 +794,11 @@ private fun LocationPickerScreen(title: String, options: List<String>, selected:
     Text(text, Modifier.fillMaxWidth(), textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
-private fun weatherSymbol(description: String): String = when {
+internal fun weatherSymbol(description: String, isNight: Boolean = false): String = when {
     "雷" in description -> "⛈"
     "雨" in description -> "🌧"
     "雪" in description -> "🌨"
+    isNight && "晴" in description -> "🌙"
     "晴" in description && "雲" in description -> "🌤"
     "晴" in description -> "☀"
     "陰" in description -> "☁"

@@ -62,7 +62,8 @@ class WeatherDataLayerTest {
     @Test
     fun `observation parses nested rain gust and derives beaufort while hiding sentinels`() {
         val root = json.parseToJsonElement("""{"records":{"Station":[{
-          "StationName":"測站","GeoInfo":{"CountyName":"臺北市","TownName":"中正區"},
+          "StationName":"測站","ObsTime":{"DateTime":"2026-09-23T18:00:00+08:00"},
+          "GeoInfo":{"CountyName":"臺北市","TownName":"中正區"},
           "WeatherElement":{"AirTemperature":"28","DewPoint":"-99","AirPressure":"1008.2",
             "WindSpeed":"12.0","Now":{"Precipitation":"3.5"},
             "Past1hr":"42","Past3hr":"110","Past24hr":"205","SunshineDurationMinutes":"276",
@@ -77,19 +78,22 @@ class WeatherDataLayerTest {
         assertEquals(listOf("42", "110", "205"), listOf(current.rainfall1Hour, current.rainfall3Hours, current.rainfall24Hours))
         assertEquals("4.6", current.sunshineDuration)
         assertEquals("", current.dewPoint)
+        assertEquals("09/23 18:00", current.station?.observedAt)
     }
 
     @Test
     fun `air quality parses complete lowercase MOENV fields and aliases`() {
         val root = json.parseToJsonElement("""{"records":[{"county":"臺北市","township":"中正區",
           "aqi":"42","status":"良好","pm2.5":"11","pm10":"22","o3":"31","co":"0.3","so2":"2","no2":"9",
-          "pollutant":"臭氧","o3_8hr":"28","co_8hr":"0.2","pm10_avg":"20","pm2.5_avg":"10","sitename":"站","publishtime":"now"}]}""").jsonObject
+          "pollutant":"臭氧","o3_8hr":"28","co_8hr":"0.2","pm10_avg":"20","pm2.5_avg":"10","sitename":"站","publishtime":"2026/09/23 18:00:00"}]}""").jsonObject
 
         val air = WeatherRepository(clock = clock).findAirQuality(root, Place("臺北市", "中正區"), null)!!
 
         assertEquals(listOf("22", "31", "0.3", "2", "9"), listOf(air.pm10, air.o3, air.co, air.so2, air.no2))
         assertEquals("臭氧", air.pollutant)
         assertEquals(listOf("28", "0.2", "20", "10"), listOf(air.o3_8hr, air.co_8hr, air.pm10Average, air.pm25Average))
+        assertEquals("09/23 18:00", air.publishTime)
+        assertEquals("09/23 18:00", air.station?.observedAt)
     }
 
     @Test

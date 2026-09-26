@@ -336,7 +336,8 @@ class WeatherRepository(
         val distance = target?.let { selected.coordinate?.let { point -> GeoDistance.kilometers(it, point) } }
         val stationInfo = StationInfo(
             selected.station.text("StationName", "stationName", "locationName").orEmpty(),
-            selected.station.deepText("ObsTime", "obsTime", "DateTime", "dateTime").orEmpty(),
+            selected.station.deepText("ObsTime", "obsTime", "DateTime", "dateTime")
+                ?.let(::observationTimeText).orEmpty(),
             selected.coordinate,
             distance
         )
@@ -368,13 +369,14 @@ class WeatherRepository(
             ?: records.firstOrNull { normalize(it.text("county")) == normalize(place.county) }
         selected ?: return null
         val point = selected.coordinate()
+        val publishTime = selected.text("publishtime")?.let(::observationTimeText).orEmpty()
         return AirQuality(
             selected.text("aqi").orEmpty().ifBlank { "--" },
             selected.text("status").orEmpty().ifBlank { "無資料" },
             selected.text("pm2.5", "pm2_5").orEmpty().ifBlank { "--" },
             selected.text("sitename").orEmpty(),
-            selected.text("publishtime").orEmpty(),
-            StationInfo(selected.text("sitename").orEmpty(), selected.text("publishtime").orEmpty(), point,
+            publishTime,
+            StationInfo(selected.text("sitename").orEmpty(), publishTime, point,
                 target?.let { point?.let { p -> GeoDistance.kilometers(it, p) } })
             , pm10 = selected.cleanText("pm10"),
             o3 = selected.cleanText("o3"),
@@ -529,8 +531,22 @@ private fun parseInstant(value: String): Instant? {
     if (value.isBlank()) return null
     return runCatching { Instant.parse(value) }.getOrNull()
         ?: runCatching { OffsetDateTime.parse(value).toInstant() }.getOrNull()
-        ?: runCatching { LocalDateTime.parse(value, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")).atZone(ZoneId.of("Asia/Taipei")).toInstant() }.getOrNull()
+        ?: LOCAL_DATE_TIME_FORMATS.firstNotNullOfOrNull { formatter ->
+            runCatching { LocalDateTime.parse(value, formatter).atZone(OBSERVATION_ZONE).toInstant() }.getOrNull()
+        }
 }
+private fun observationTimeText(value: String): String = parseInstant(value)
+    ?.atZone(OBSERVATION_ZONE)
+    ?.format(OBSERVATION_TIME_FORMAT)
+    ?: value
+private val OBSERVATION_ZONE = ZoneId.of("Asia/Taipei")
+private val OBSERVATION_TIME_FORMAT = DateTimeFormatter.ofPattern("MM/dd HH:mm")
+private val LOCAL_DATE_TIME_FORMATS = listOf(
+    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
+    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"),
+    DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss"),
+    DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm")
+)
 private fun JsonObject.text(vararg keys: String): String? = keys.firstNotNullOfOrNull { get(it)?.stringValue() }
 private fun JsonElement.stringValue(): String? = runCatching { jsonPrimitive.content }.getOrNull()
 private fun JsonObject.obj(vararg keys: String): JsonObject? = keys.firstNotNullOfOrNull { get(it) as? JsonObject }

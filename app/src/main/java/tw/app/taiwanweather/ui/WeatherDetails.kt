@@ -1,5 +1,6 @@
 package tw.app.taiwanweather.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,7 +28,7 @@ import tw.app.taiwanweather.data.SunTimes
 import tw.app.taiwanweather.data.uvProtectionAdvice
 
 @Composable
-internal fun WeatherDetailsSection(report: WeatherReport, sunTimes: SunTimes?) {
+internal fun WeatherDetailsSection(report: WeatherReport, sunTimes: SunTimes?, forceExpanded: Boolean = false) {
     val today = report.forecast.firstOrNull()
     val uv = report.hourly.firstNotNullOfOrNull { it.uvIndex.takeUnless(::missing) }
         ?: today?.uvIndex?.takeUnless(::missing)
@@ -48,39 +49,64 @@ internal fun WeatherDetailsSection(report: WeatherReport, sunTimes: SunTimes?) {
 
     Card(
         shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .94f))
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        elevation = CardDefaults.cardElevation(2.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+        )
     ) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Text("今日生活氣象", fontSize = 18.sp, fontWeight = FontWeight.Bold)
             if (uv != null) {
                 Text("紫外線 $uv · ${uvAdvice?.label ?: "資料可用"}", Modifier.padding(top = 8.dp), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                uvAdvice?.let { Text(it.advice, Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                uvAdvice?.let {
+                    Text(
+                        it.advice,
+                        Modifier.padding(top = 4.dp),
+                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = .8f)
+                    )
+                }
             } else {
-                Text("紫外線目前無資料", Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "紫外線目前無資料",
+                    Modifier.padding(top = 8.dp),
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = .8f)
+                )
             }
-            TextButton(onClick = { expanded = !expanded }) {
-                Text(if (expanded) "收合詳細氣象" else "查看詳細氣象")
+            if (!forceExpanded) {
+                TextButton(onClick = { expanded = !expanded }) {
+                    Text(if (expanded) "收合詳細氣象" else "查看詳細氣象")
+                }
             }
-            if (expanded) {
+            if (forceExpanded || expanded) {
                 HorizontalDivider(Modifier.padding(bottom = 8.dp))
                 sunTimes?.let {
                     DetailRow("日出", it.sunriseText())
                     DetailRow("日落", it.sunsetText())
                 }
-                if (details.isEmpty()) Text("目前沒有更多詳細資料", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                details.forEach { (label, value) -> DetailRow(label, value) }
+                if (details.isEmpty()) {
+                    Text("目前沒有更多詳細資料", color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = .8f))
+                }
+                details.forEach { (label, value) -> DetailRow(label, value, MaterialTheme.colorScheme.onSecondaryContainer) }
             }
         }
     }
 }
 
 @Composable
-internal fun AirPollutantDetails(values: List<Pair<String, String>>, contentColor: Color) {
+internal fun AirPollutantDetails(
+    values: List<Pair<String, String>>,
+    contentColor: Color,
+    forceExpanded: Boolean = false
+) {
     var expanded by rememberSaveable { mutableStateOf(false) }
-    TextButton(onClick = { expanded = !expanded }) {
-        Text(if (expanded) "收合污染物資料" else "查看污染物詳細資料")
+    if (!forceExpanded) {
+        TextButton(onClick = { expanded = !expanded }) {
+            Text(if (expanded) "收合污染物資料" else "查看污染物詳細資料")
+        }
     }
-    if (expanded) {
+    if (forceExpanded || expanded) {
         HorizontalDivider(Modifier.padding(bottom = 8.dp), color = contentColor.copy(alpha = .25f))
         values.filterNot { missing(it.second) }.forEach { (label, value) ->
             Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -92,10 +118,10 @@ internal fun AirPollutantDetails(values: List<Pair<String, String>>, contentColo
 }
 
 @Composable
-private fun DetailRow(label: String, value: String) {
+private fun DetailRow(label: String, value: String, contentColor: Color = MaterialTheme.colorScheme.onSecondaryContainer) {
     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, fontWeight = FontWeight.Bold)
+        Text(label, color = contentColor.copy(alpha = .8f))
+        Text(value, fontWeight = FontWeight.Bold, color = contentColor)
     }
 }
 
