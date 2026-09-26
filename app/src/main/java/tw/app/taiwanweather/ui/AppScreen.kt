@@ -95,7 +95,10 @@ import tw.app.taiwanweather.data.SunTimes
 import tw.app.taiwanweather.data.TaiwanCounties
 import tw.app.taiwanweather.data.WeatherReport
 import tw.app.taiwanweather.data.aqiHealthAdvice
+import tw.app.taiwanweather.data.beaufortName
+import tw.app.taiwanweather.data.comfortDescription
 import tw.app.taiwanweather.data.todayWeatherSummary
+import tw.app.taiwanweather.data.uvProtectionAdvice
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.ui.platform.LocalContext
@@ -260,7 +263,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.reportItems(
         }
     }
     item { CurrentWeatherCard(report, sunTimes) }
-    item { WeatherDetailsSection(report) }
+    item { WeatherDetailsSection(report, sunTimes) }
     if (missingMoenvKey) item {
         CuteCard {
             Text("尚未設定環境部 API Key", fontWeight = FontWeight.Bold)
@@ -335,6 +338,10 @@ private fun androidx.compose.foundation.lazy.LazyListScope.reportItems(
 
 @Composable
 private fun CurrentWeatherCard(report: WeatherReport, sunTimes: SunTimes?) {
+    val current = report.current
+    val comfort = comfortDescription(current.comfort, current.temperature)
+    val beaufort = beaufortName(current.beaufortScale)
+    val uvAdvice = uvProtectionAdvice(current.uvIndex)
     Card(
         shape = RoundedCornerShape(32.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
@@ -342,24 +349,38 @@ private fun CurrentWeatherCard(report: WeatherReport, sunTimes: SunTimes?) {
     ) {
         Column(Modifier.padding(24.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                Text(weatherSymbol(report.current.description), fontSize = 66.sp, modifier = Modifier.padding(end = 24.dp))
+                Text(weatherSymbol(current.description), fontSize = 66.sp, modifier = Modifier.padding(end = 24.dp))
                 Column(horizontalAlignment = Alignment.Start) {
-                    Text("${report.current.temperature}°", fontSize = 58.sp, fontWeight = FontWeight.Black)
-                    Text(report.current.description, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    Text("體感 ${report.current.apparentTemperature}°", color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .75f))
+                    Text("${current.temperature}°", fontSize = 58.sp, fontWeight = FontWeight.Black)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(current.description, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        comfort?.let { Text("　$it", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .75f)) }
+                    }
+                    Text("體感 ${current.apparentTemperature}°", color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .75f))
                 }
             }
             HorizontalDivider(Modifier.padding(vertical = 16.dp), color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .14f))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Metric("濕度", "${report.current.humidity}%")
-                Metric("降雨", "${report.current.rainProbability}%")
-                Metric("風", report.current.wind)
+                Metric("濕度", "${current.humidity}%", Modifier.weight(1f))
+                Metric("降雨機率", "${current.rainProbability}%", Modifier.weight(1f))
+                val beaufortText = if (missingWeatherValue(current.beaufortScale)) "--"
+                    else if (beaufort == null) "${current.beaufortScale} 級" else "${current.beaufortScale} 級 · $beaufort"
+                Metric("蒲福風級", beaufortText, Modifier.weight(1f))
             }
-            sunTimes?.let {
+            val rainfall = current.precipitation.takeUnless(::missingWeatherValue)
+            val daylightParts = listOfNotNull(
+                current.uvIndex.takeUnless(::missingWeatherValue)?.let { "UV $it${uvAdvice?.let { advice -> " · ${advice.label}" }.orEmpty()}" }
+            )
+            if (rainfall != null || sunTimes != null) {
                 HorizontalDivider(Modifier.padding(vertical = 14.dp), color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .14f))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    Metric("日出", it.sunriseText())
-                    Metric("日落", it.sunsetText())
+                Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    rainfall?.let { Metric("今日累積雨量", "$it mm") }
+                    sunTimes?.let { Metric("今日白晝", "${it.daylightText()} · ${it.daylightTrend.orEmpty()}") }
+                }
+            }
+            if (daylightParts.isNotEmpty()) {
+                Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.Center) {
+                    daylightParts.forEach { part -> Metric("紫外線", part.removePrefix("UV ")) }
                 }
             }
             Text(
@@ -377,6 +398,8 @@ private fun CurrentWeatherCard(report: WeatherReport, sunTimes: SunTimes?) {
     }
 }
 
+private fun missingWeatherValue(value: String) = value.isBlank() || value == "--"
+
 private fun AqiLevel.aqiColor() = when (this) {
     AqiLevel.GOOD -> Color(0xFF00E800)
     AqiLevel.MODERATE -> Color(0xFFFFFF00)
@@ -386,7 +409,7 @@ private fun AqiLevel.aqiColor() = when (this) {
     AqiLevel.HAZARDOUS -> Color(0xFF7E0023)
 }
 
-@Composable private fun Metric(label: String, value: String) = Column(horizontalAlignment = Alignment.CenterHorizontally) {
+@Composable private fun Metric(label: String, value: String, modifier: Modifier = Modifier) = Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
     Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(value, fontWeight = FontWeight.Bold)
 }
 

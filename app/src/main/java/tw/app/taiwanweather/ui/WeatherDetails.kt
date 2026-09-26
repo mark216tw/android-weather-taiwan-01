@@ -23,26 +23,27 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import tw.app.taiwanweather.data.WeatherReport
+import tw.app.taiwanweather.data.SunTimes
 import tw.app.taiwanweather.data.uvProtectionAdvice
 
 @Composable
-internal fun WeatherDetailsSection(report: WeatherReport) {
+internal fun WeatherDetailsSection(report: WeatherReport, sunTimes: SunTimes?) {
     val today = report.forecast.firstOrNull()
     val uv = report.hourly.firstNotNullOfOrNull { it.uvIndex.takeUnless(::missing) }
         ?: today?.uvIndex?.takeUnless(::missing)
     val uvAdvice = uv?.let(::uvProtectionAdvice)
     var expanded by rememberSaveable { mutableStateOf(false) }
-    val comfort = report.hourly.firstNotNullOfOrNull { it.comfort.takeUnless(::missing) }
-        ?: today?.comfort.orEmpty()
     val details = listOfNotNull(
         detail("露點", report.current.dewPoint, "°C"),
         detail("氣壓", report.current.pressure, " hPa"),
-        detail("目前／累積雨量", report.current.precipitation, " mm"),
+        detail("平均風速／風向", report.current.wind, ""),
         detail("最大陣風", report.current.gustSpeed, " m/s"),
-        detail("蒲福風級", report.current.beaufortScale, " 級"),
+        detail("1 小時累積雨量", report.current.rainfall1Hour, " mm"),
+        detail("3 小時累積雨量", report.current.rainfall3Hours, " mm"),
+        detail("24 小時累積雨量", report.current.rainfall24Hours, " mm"),
+        detail("今日日照時數", report.current.sunshineDuration, " 小時"),
         detail("最低／最高溫", range(today?.minTemperature, today?.maxTemperature), "°C"),
         detail("最低／最高體感", range(today?.minApparentTemperature, today?.maxApparentTemperature), "°C"),
-        detail("舒適度", comfort, "")
     )
 
     Card(
@@ -62,6 +63,10 @@ internal fun WeatherDetailsSection(report: WeatherReport) {
             }
             if (expanded) {
                 HorizontalDivider(Modifier.padding(bottom = 8.dp))
+                sunTimes?.let {
+                    DetailRow("日出", it.sunriseText())
+                    DetailRow("日落", it.sunsetText())
+                }
                 if (details.isEmpty()) Text("目前沒有更多詳細資料", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 details.forEach { (label, value) -> DetailRow(label, value) }
             }

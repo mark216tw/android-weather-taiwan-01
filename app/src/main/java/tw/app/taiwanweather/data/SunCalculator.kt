@@ -10,16 +10,31 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.tan
 
-data class SunTimes(val sunrise: Instant, val sunset: Instant) {
+data class SunTimes(val sunrise: Instant, val sunset: Instant, val daylightTrend: String? = null) {
     fun sunriseText(): String = sunrise.atZone(TAIPEI_ZONE).format(TIME_FORMAT)
     fun sunsetText(): String = sunset.atZone(TAIPEI_ZONE).format(TIME_FORMAT)
+    fun daylightText(): String {
+        val minutes = (sunset.epochSecond - sunrise.epochSecond) / 60
+        return "${minutes / 60} 小時 ${minutes % 60} 分"
+    }
 }
 
 object SunCalculator {
     fun calculate(date: LocalDate, point: GeoPoint): SunTimes? {
         val sunrise = event(date, point, sunrise = true) ?: return null
         val sunset = event(date, point, sunrise = false) ?: return null
-        return SunTimes(sunrise, sunset)
+        val yesterdaySunrise = event(date.minusDays(1), point, sunrise = true)
+        val yesterdaySunset = event(date.minusDays(1), point, sunrise = false)
+        val todayMinutes = sunset.epochSecond - sunrise.epochSecond
+        val yesterdayMinutes = yesterdaySunset?.epochSecond?.minus(yesterdaySunrise?.epochSecond ?: return null)
+        val trend = yesterdayMinutes?.let {
+            when {
+                todayMinutes > it -> "漸增"
+                todayMinutes < it -> "漸減"
+                else -> "持平"
+            }
+        }
+        return SunTimes(sunrise, sunset, trend)
     }
 
     fun isDark(now: Instant, times: SunTimes): Boolean = now < times.sunrise || now >= times.sunset

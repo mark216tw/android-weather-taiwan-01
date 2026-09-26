@@ -29,4 +29,12 @@ class SunCalculatorTest {
         assertFalse(SunCalculator.isDark(times.sunset.minusSeconds(1), times))
         assertTrue(SunCalculator.isDark(times.sunset, times))
     }
+
+    @Test
+    fun `daylight text and trend are calculated from astronomical sun times`() {
+        val times = requireNotNull(SunCalculator.calculate(LocalDate.of(2026, 9, 23), taipei))
+
+        assertTrue(times.daylightText().contains("小時"))
+        assertEquals("漸減", times.daylightTrend)
+    }
 }

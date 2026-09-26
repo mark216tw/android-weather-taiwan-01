@@ -110,8 +110,12 @@ class WeatherRepository(
                 dewPoint = it.dewPoint.ifBlank { parsed.current.dewPoint },
                 pressure = it.pressure.ifBlank { parsed.current.pressure },
                 precipitation = it.precipitation.ifBlank { parsed.current.precipitation },
+                rainfall1Hour = it.rainfall1Hour.ifBlank { parsed.current.rainfall1Hour },
+                rainfall3Hours = it.rainfall3Hours.ifBlank { parsed.current.rainfall3Hours },
+                rainfall24Hours = it.rainfall24Hours.ifBlank { parsed.current.rainfall24Hours },
                 gustSpeed = it.gustSpeed.ifBlank { parsed.current.gustSpeed },
                 beaufortScale = it.beaufortScale.ifBlank { parsed.current.beaufortScale },
+                sunshineDuration = it.sunshineDuration.ifBlank { parsed.current.sunshineDuration },
                 station = it.station
             )
         } ?: parsed.current
@@ -249,7 +253,9 @@ class WeatherRepository(
             rainProbability = value(at(rain, first), "ProbabilityOfPrecipitation", "value") ?: "--",
             wind = wind(first),
             dewPoint = value(at(dewPoint, first), "DewPoint", "DewPointTemperature", "value") ?: "--",
-            beaufortScale = value(at(beaufort, first), "BeaufortScale", "value") ?: "--"
+            beaufortScale = value(at(beaufort, first), "BeaufortScale", "value") ?: "--",
+            uvIndex = value(at(uv, first), "UVIndex", "UVI", "value") ?: "--",
+            comfort = value(at(comfort, first), "ComfortIndexDescription", "Comfort", "ComfortIndex", "value") ?: "--"
         )
         val end = now.plusSeconds(48 * 60 * 60)
         val hourlyKeys = futureKeys.filter { key ->
@@ -321,6 +327,12 @@ class WeatherRepository(
         val gust = nestedValue("GustInfo", "PeakGustSpeed", "peakGustSpeed", "WindSpeed", "windSpeed")
             .ifBlank { valid("PeakGustSpeed", "peakGustSpeed", "MaxGustSpeed", "maxGustSpeed") }
         val apiBeaufort = selected.weather.deepText("BeaufortScale", "beaufortScale").validNumber()
+        fun rain(vararg keys: String) = selected.weather.deepText(*keys).validNumber().orEmpty()
+        val sunshineMinutes = selected.weather.deepText("SunshineDurationMinutes", "sunshineDurationMinutes")
+            .validNumber()?.toDoubleOrNull()
+        val sunshine = sunshineMinutes?.div(60.0)?.formatNumber()
+            ?: selected.weather.deepText("SunshineDuration", "sunshineDuration", "SunshineHours", "sunshineHours")
+                .validNumber().orEmpty()
         val distance = target?.let { selected.coordinate?.let { point -> GeoDistance.kilometers(it, point) } }
         val stationInfo = StationInfo(
             selected.station.text("StationName", "stationName", "locationName").orEmpty(),
@@ -338,8 +350,12 @@ class WeatherRepository(
             precipitation = nestedValue("Now", "Precipitation", "precipitation").ifBlank {
                 valid("Precipitation", "precipitation", "Rainfall", "rainfall")
             },
+            rainfall1Hour = rain("Past1hr", "past1hr", "Past1Hour", "past1Hour", "Rainfall1Hour", "rainfall1Hour"),
+            rainfall3Hours = rain("Past3hr", "past3hr", "Past3Hours", "past3Hours", "Rainfall3Hours", "rainfall3Hours"),
+            rainfall24Hours = rain("Past24hr", "past24hr", "Past24Hours", "past24Hours", "Rainfall24Hours", "rainfall24Hours"),
             gustSpeed = gust,
             beaufortScale = apiBeaufort ?: windSpeed.toDoubleOrNull()?.let(::windSpeedToBeaufort)?.toString().orEmpty(),
+            sunshineDuration = sunshine,
             station = stationInfo
         )
     }

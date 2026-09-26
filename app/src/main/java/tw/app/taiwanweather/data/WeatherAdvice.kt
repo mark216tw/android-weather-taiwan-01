@@ -24,6 +24,59 @@ data class UvProtectionAdvice(
     val advice: String
 )
 
+enum class RainfallLevel { HEAVY_RAIN, TORRENTIAL_RAIN, EXTREMELY_TORRENTIAL_RAIN, SUPER_TORRENTIAL_RAIN }
+
+data class RainfallAdvice(val level: RainfallLevel, val label: String)
+
+fun rainfallAdvice(oneHour: String, threeHours: String, twentyFourHours: String): RainfallAdvice? {
+    val h1 = oneHour.toDoubleOrNull()
+    val h3 = threeHours.toDoubleOrNull()
+    val h24 = twentyFourHours.toDoubleOrNull()
+    return when {
+        h24 != null && h24 >= 500 -> RainfallAdvice(RainfallLevel.SUPER_TORRENTIAL_RAIN, "超大豪雨")
+        h24 != null && h24 >= 350 || h3 != null && h3 >= 200 ->
+            RainfallAdvice(RainfallLevel.EXTREMELY_TORRENTIAL_RAIN, "大豪雨")
+        h24 != null && h24 >= 200 || h3 != null && h3 >= 100 ->
+            RainfallAdvice(RainfallLevel.TORRENTIAL_RAIN, "豪雨")
+        h24 != null && h24 >= 80 || h1 != null && h1 >= 40 ->
+            RainfallAdvice(RainfallLevel.HEAVY_RAIN, "大雨")
+        else -> null
+    }
+}
+
+fun beaufortName(scale: String): String? = scale.toDoubleOrNull()?.toInt()?.let {
+    when {
+        it < 0 -> null
+        it <= 0 -> "無風"
+        it == 1 -> "軟風"
+        it == 2 -> "輕風"
+        it == 3 -> "微風"
+        it == 4 -> "和風"
+        it == 5 -> "清風"
+        it == 6 -> "強風"
+        it == 7 -> "疾風"
+        it in 8..11 -> "輕度颱風"
+        it in 12..15 -> "中度颱風"
+        else -> "強烈颱風"
+    }
+}
+
+fun comfortDescription(official: String, temperature: String): String? {
+    if (official.isNotBlank() && official != "--" && official.toDoubleOrNull() == null) return official
+    val value = official.toDoubleOrNull() ?: temperature.toDoubleOrNull() ?: return null
+    return when {
+        value < 4 -> "很冷"
+        value < 8 -> "冷"
+        value < 13 -> "涼爽"
+        value < 18 -> "稍涼爽"
+        value < 23 -> "舒適"
+        value < 29 -> "稍溫暖"
+        value < 35 -> "悶熱"
+        value < 41 -> "易中暑"
+        else -> "很熱"
+    }
+}
+
 fun uvProtectionAdvice(uvIndex: String): UvProtectionAdvice? {
     val value = uvIndex.toDoubleOrNull() ?: return null
     return when {

@@ -64,7 +64,9 @@ class WeatherDataLayerTest {
         val root = json.parseToJsonElement("""{"records":{"Station":[{
           "StationName":"測站","GeoInfo":{"CountyName":"臺北市","TownName":"中正區"},
           "WeatherElement":{"AirTemperature":"28","DewPoint":"-99","AirPressure":"1008.2",
-            "WindSpeed":"12.0","Now":{"Precipitation":"3.5"},"GustInfo":{"PeakGustSpeed":"18.2"}}
+            "WindSpeed":"12.0","Now":{"Precipitation":"3.5"},
+            "Past1hr":"42","Past3hr":"110","Past24hr":"205","SunshineDurationMinutes":"276",
+            "GustInfo":{"PeakGustSpeed":"18.2"}}
         }]}}""").jsonObject
 
         val current = WeatherRepository(clock = clock).findObservation(root, Place("臺北市", "中正區"), null)!!
@@ -72,6 +74,8 @@ class WeatherDataLayerTest {
         assertEquals("3.5", current.precipitation)
         assertEquals("18.2", current.gustSpeed)
         assertEquals("6", current.beaufortScale)
+        assertEquals(listOf("42", "110", "205"), listOf(current.rainfall1Hour, current.rainfall3Hours, current.rainfall24Hours))
+        assertEquals("4.6", current.sunshineDuration)
         assertEquals("", current.dewPoint)
     }
 

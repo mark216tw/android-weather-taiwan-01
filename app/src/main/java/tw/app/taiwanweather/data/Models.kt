@@ -40,8 +40,14 @@ data class CurrentWeather(
     val dewPoint: String = "--",
     val pressure: String = "--",
     val precipitation: String = "--",
+    val rainfall1Hour: String = "--",
+    val rainfall3Hours: String = "--",
+    val rainfall24Hours: String = "--",
     val gustSpeed: String = "--",
-    val beaufortScale: String = "--"
+    val beaufortScale: String = "--",
+    val sunshineDuration: String = "--",
+    val uvIndex: String = "--",
+    val comfort: String = "--"
 )
 
 data class HourlyForecast(

@@ -28,7 +28,12 @@ class HomeScreenTest {
     fun cachedReportShowsFreshnessHourlyAndAlerts() {
         val report = WeatherReport(
             place = Place("臺北市", "中正區"),
-            current = CurrentWeather(temperature = "28", description = "晴", dewPoint = "22", pressure = "1008"),
+            current = CurrentWeather(
+                temperature = "28", description = "晴", dewPoint = "22", pressure = "1008",
+                rainProbability = "70", precipitation = "3.5", rainfall1Hour = "42", rainfall3Hours = "110",
+                rainfall24Hours = "205", beaufortScale = "6", sunshineDuration = "4.6", uvIndex = "6",
+                comfort = "舒適"
+            ),
             forecast = emptyList(),
             airQuality = AirQuality(
                 aqi = "75", status = "普通", pm25 = "18", siteName = "中山", publishTime = "12:00",
@@ -64,10 +69,17 @@ class HomeScreenTest {
         compose.onNodeWithText("目前顯示已儲存資料，內容可能已過期").assertIsDisplayed()
         compose.onNodeWithText("豪雨特報").assertIsDisplayed()
         compose.onAllNodesWithText("未來 48 小時分時預報").assertCountEquals(0)
-        compose.onNodeWithText("日出").assertIsDisplayed()
-        compose.onNodeWithText("日落").assertIsDisplayed()
+        compose.onNodeWithText("今日白晝").assertIsDisplayed()
         compose.onNodeWithText("今日生活氣象").assertIsDisplayed()
         compose.onNodeWithText("紫外線 6 · 高量級").assertIsDisplayed()
+        compose.onNodeWithText("晴　舒適").assertIsDisplayed()
+        compose.onNodeWithText("6 級 · 強風").assertIsDisplayed()
+        compose.onNodeWithText("今日累積雨量").assertIsDisplayed()
+        compose.onNodeWithText("紫外線").assertIsDisplayed()
+        compose.onNodeWithText("查看詳細氣象").performClick()
+        compose.onNodeWithText("日出").assertIsDisplayed()
+        compose.onNodeWithText("日落").assertIsDisplayed()
+        compose.onNodeWithText("今日日照時數").assertIsDisplayed()
         compose.onAllNodesWithText("未來 24 小時趨勢").assertCountEquals(0)
         compose.onNodeWithText("查看污染物詳細資料").performClick()
         compose.onNodeWithText("PM10").assertIsDisplayed()
